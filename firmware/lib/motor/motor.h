@@ -39,5 +39,9 @@
     #define Motor ESC
 #endif
 
+#ifdef USE_RASPIMOTORHAT_MOTOR_DRIVER
+    // pass your built in class to Motor macro
+    #define Motor RASPIMOTORHAT
+#endif
 
 #endif
