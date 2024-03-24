@@ -12,11 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef DEFAULT_MOTOR
-#define DEFAULT_MOTOR
 
 #include <Arduino.h>
 #include <Servo.h> 
+
+#ifndef DEFAULT_MOTOR
+   #ifdef USE_RASPIMOTORHAT_MOTOR_DRIVER
+#include "ArduinoLog.h"
+#include "Raspi_MotorHAT.h"
+   #endif
+#define DEFAULT_MOTOR
 
 #include "motor_interface.h"
 
@@ -67,6 +72,7 @@ class Generic2: public MotorInterface
         {
             analogWrite(pwm_pin_, 0);
         }
+        bool initialize() override { return true;}
 };
 
 class Generic1: public MotorInterface
@@ -111,6 +117,7 @@ class Generic1: public MotorInterface
         {
             analogWrite(pwm_pin_, 0);
         }
+        bool initialize() override { return true;}
 };
 
 class BTS7960: public MotorInterface
@@ -180,6 +187,7 @@ class BTS7960: public MotorInterface
             analogWrite(in_b_pin_, 0);
             analogWrite(in_a_pin_, 0);            
         }
+        bool initialize() override { return true;}
 };
 
 class ESC: public MotorInterface
@@ -214,6 +222,52 @@ class ESC: public MotorInterface
         {
             motor_.writeMicroseconds(1500);         
         }
+        bool initialize() override { return true;}
 };
+
+#ifdef USE_RASPIMOTORHAT_MOTOR_DRIVER
+Raspi_MotorHAT MotorHAT(0x6F, 160);
+class RASPIMOTORHAT: public MotorInterface
+{
+    private:
+        int in_a_pin_;
+        int in_b_pin_;
+        int pwm_pin_;
+
+    protected:
+        void forward(int pwm) override {
+           MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm);
+           MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::FORWARD);
+	}
+        void reverse(int pwm) override {
+           MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm);
+           MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::BACKWARD);
+        }
+
+    public:
+        RASPIMOTORHAT(float pwm_frequency, int pwm_bits, bool invert, int pwm_pin, int in_a_pin, int in_b_pin): 
+            MotorInterface(invert),
+            in_a_pin_(in_a_pin),
+            in_b_pin_(in_b_pin),
+            pwm_pin_(pwm_pin) {
+        }
+
+        void brake() override {
+           MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::RELEASE);
+        }
+        bool initialize() override {
+#ifdef RaspiMotorHAT_DEBUG
+           Log.trace("START Motor::initialize()\n");
+#endif
+
+           //ensure that the motor "pwm_pin" is in neutral state during bootup
+           if (!MotorHAT.initialize()) return false;
+	   spin(0);
+	   //break();
+           return true;
+        }
+};
+
+#endif
 
 #endif
