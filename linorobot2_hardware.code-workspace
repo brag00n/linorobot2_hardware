@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../../raspbian_apps"
+		},
+		{
+			"path": "../linorobot2"
+		},
+		{
+			"name": "bamboov2",
+			"path": "firmware/bamboov2"
+		}
+	],
+	"settings": {}
+}
