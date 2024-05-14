@@ -14,8 +14,8 @@ Raspi_MotorHAT::Raspi_MotorHAT(uint8_t address,uint8_t frequency){
     _frequency = frequency;		       // default @1600Hz PWM freq
     _pwm = new Raspi_PWM_Servo_Driver (_i2caddr, _frequency); 
         
-    _motors[0] = new Raspi_DCMotor (this, 1);
-    _motors[1] = new Raspi_DCMotor (this, 0);
+    _motors[0] = new Raspi_DCMotor (this, 0);
+    _motors[1] = new Raspi_DCMotor (this, 1);
     _motors[2] = new Raspi_DCMotor (this, 2);
     _motors[3] = new Raspi_DCMotor (this, 3);
 

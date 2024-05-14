@@ -113,11 +113,9 @@ bool Raspi_PWM_Servo_Driver::setPWM(uint8_t channel, uint16_t on, uint16_t off){
 #endif
     
     //Log.trace("Raspi_PWM_Servo_Driver.setPWM");
-    if (!I2Cdev::writeByte(_address, LED0_ON_L+4*channel,  on & 0xFF)) return false;
-   
-    //DEBUG_writeByte(_address, LED0_ON_L+4*channel,  on & 0xFF); 
-   
-    I2Cdev::writeByte(_address, LED0_ON_H+4*channel,  on >> 8);
+    if (!I2Cdev::writeByte(_address, LED0_ON_L+4*channel,  on & 0xFF))   return false;
+
+    I2Cdev::writeByte(_address, LED0_ON_H +4*channel,  on >> 8);
     I2Cdev::writeByte(_address, LED0_OFF_L+4*channel,  off & 0xFF);
     I2Cdev::writeByte(_address, LED0_OFF_H+4*channel,  off >> 8);
     
