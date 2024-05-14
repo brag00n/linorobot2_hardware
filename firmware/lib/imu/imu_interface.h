@@ -96,6 +96,33 @@ class IMUInterface
 
             return imu_msg_;
         }
+
+        bool equals (sensor_msgs__msg__Imu imu_msg__)
+        {
+	   if (
+            imu_msg_.angular_velocity.x == imu_msg__.angular_velocity.x &&
+            imu_msg_.angular_velocity.y == imu_msg__.angular_velocity.y && 
+            imu_msg_.angular_velocity.z == imu_msg__.angular_velocity.z  
+
+            //imu_msg_.linear_acceleration.x == imu_msg__.linear_acceleration.x &&
+            //imu_msg_.linear_acceleration.y == imu_msg__.linear_acceleration.y &&
+            //imu_msg_.linear_acceleration.z == imu_msg__.linear_acceleration.z 
+	    )
+	      return true;
+	   else
+	      return false;
+        }
+
+        void copy(sensor_msgs__msg__Imu *imu_msg__)
+        {
+            imu_msg__->angular_velocity.x == imu_msg_.angular_velocity.x; 
+            imu_msg__->angular_velocity.y == imu_msg_.angular_velocity.y; 
+            imu_msg__->angular_velocity.z == imu_msg_.angular_velocity.z; 
+
+            imu_msg__->linear_acceleration.x = imu_msg_.linear_acceleration.x;
+            imu_msg__->linear_acceleration.y = imu_msg_.linear_acceleration.y;
+            imu_msg__->linear_acceleration.z = imu_msg_.linear_acceleration.z;
+        }
 };
 
 #endif

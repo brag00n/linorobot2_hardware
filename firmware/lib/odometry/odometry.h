@@ -26,6 +26,8 @@ class Odometry
         Odometry();
         void update(float vel_dt, float linear_vel_x, float linear_vel_y, float angular_vel_z);
         nav_msgs__msg__Odometry getData();
+        bool equals(nav_msgs__msg__Odometry odom_);
+        void copy(nav_msgs__msg__Odometry *odom_msg__);
 
     private:
         const void euler_to_quat(float x, float y, float z, float* q);

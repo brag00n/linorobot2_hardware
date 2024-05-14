@@ -43,9 +43,13 @@
 #define K_I 0.8                             // I constant
 #define K_D 0.5                             // D constant
 i*/
-#define K_P 0.8                             // P constant
-#define K_I 0.6                             // I constant
-#define K_D 0.4                             // D constant
+//#define K_P 0.01                             // P constant
+#define K_P 0.2                            // P constant
+#define K_I 0.1                            // I constant
+#define K_D 0.1                             // D constant
+
+#define NED_TO_ENU false
+
 /*
 ROBOT ORIENTATION
          FRONT
@@ -53,6 +57,19 @@ ROBOT ORIENTATION
     MOTOR3  MOTOR4  (4WD/MECANUM)  
          BACK
 */
+
+//ROS:
+#define ROS_DOMAIN_ID 0
+#define NODE "base_node"
+#define NAMESPACE ""
+#define BASE_FRAME_ID "base_footprint"
+#define ODOM_FRAME_ID "odom"
+#define IMU_FRAME_ID  "imu_link"
+#define MOTOR1 "joint_lf"
+#define MOTOR2 "joint_rf"
+#define MOTOR3 "joint_lb"
+#define MOTOR4 "joint_rb"
+#define UPDATE_FREQ 50  // Control timer frequency in Hz (50Hz = 20ms)
 
 //define your robot' specs here
 #define MOTOR_MAX_RPM 1440                  // motor's max RPM          

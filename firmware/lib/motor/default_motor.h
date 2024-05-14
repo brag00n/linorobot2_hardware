@@ -233,15 +233,26 @@ class RASPIMOTORHAT: public MotorInterface
         int in_a_pin_;
         int in_b_pin_;
         int pwm_pin_;
+	double moveMode=Raspi_DCMotor::RELEASE;
 
     protected:
         void forward(int pwm) override {
-           MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm);
-           MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::FORWARD);
+	   int loop=0;
+	   while (!MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm) && loop<10) loop++;
+	   loop=0;
+	   //if (moveMode!=Raspi_DCMotor::FORWARD){
+              while (!MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::FORWARD) && loop<10) loop++;
+	      moveMode=Raspi_DCMotor::FORWARD;
+	   //}
 	}
         void reverse(int pwm) override {
-           MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm);
-           MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::BACKWARD);
+	   if (pwm<0) pwm=-pwm;
+	   int loop=0;
+	   while (!MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm) && loop<10) loop++;
+	   loop=0;
+           //MotorHAT.getMotor(pwm_pin_)->setSpeed(pwm);
+           //MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::BACKWARD);
+           while (!MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::BACKWARD) && loop<10) loop++;
         }
 
     public:
@@ -253,6 +264,7 @@ class RASPIMOTORHAT: public MotorInterface
         }
 
         void brake() override {
+           MotorHAT.getMotor(pwm_pin_)->setSpeed(0);
            MotorHAT.getMotor(pwm_pin_)->run(Raspi_DCMotor::RELEASE);
         }
         bool initialize() override {
@@ -263,7 +275,7 @@ class RASPIMOTORHAT: public MotorInterface
            //ensure that the motor "pwm_pin" is in neutral state during bootup
            if (!MotorHAT.initialize()) return false;
 	   spin(0);
-	   //break();
+	   brake();
            return true;
         }
 };
