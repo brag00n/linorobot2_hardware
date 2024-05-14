@@ -43,8 +43,10 @@ bool Raspi_DCMotor::run(uint8_t command){
     }
       
 		if (command == Raspi_DCMotor::FORWARD){
-			_MC->setPin(9, 0);
-			_MC->setPin(10, 1);
+			//_MC->setPin(9, 0);
+			//_MC->setPin(10, 1);
+			_MC->setPin(_IN2pin, 0);
+			_MC->setPin(_IN1pin, 1);
 		} else if (command == Raspi_DCMotor::BACKWARD){
 			_MC->setPin(_IN1pin, 0);
 			_MC->setPin(_IN2pin, 1);
