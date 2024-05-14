@@ -76,6 +76,73 @@ nav_msgs__msg__Odometry Odometry::getData()
     return odom_msg_;
 } 
 
+bool Odometry::equals(nav_msgs__msg__Odometry odom_){
+
+    if (
+    //robot's position in x,y, and z
+    odom_msg_.pose.pose.position.x == odom_.pose.pose.position.x &&
+    odom_msg_.pose.pose.position.y == odom_.pose.pose.position.y && 
+    odom_msg_.pose.pose.position.z == odom_.pose.pose.position.z && 
+
+    //robot's heading in quaternion
+    odom_msg_.pose.pose.orientation.x == odom_.pose.pose.orientation.x &&
+    odom_msg_.pose.pose.orientation.y == odom_.pose.pose.orientation.y &&
+    odom_msg_.pose.pose.orientation.z == odom_.pose.pose.orientation.z &&
+    odom_msg_.pose.pose.orientation.w == odom_.pose.pose.orientation.w &&
+
+    odom_msg_.pose.covariance[0] == odom_.pose.covariance[0] &&
+    odom_msg_.pose.covariance[7] == odom_.pose.covariance[7] &&
+    odom_msg_.pose.covariance[35] == odom_.pose.covariance[35] &&
+
+    //linear speed from encoders
+    odom_msg_.twist.twist.linear.x == odom_.twist.twist.linear.x &&
+    odom_msg_.twist.twist.linear.y == odom_.twist.twist.linear.y &&
+    odom_msg_.twist.twist.linear.z == odom_.twist.twist.linear.z &&
+
+    //angular speed from encoders
+    odom_msg_.twist.twist.angular.x == odom_.twist.twist.angular.x &&
+    odom_msg_.twist.twist.angular.y == odom_.twist.twist.angular.y &&
+    odom_msg_.twist.twist.angular.z == odom_.twist.twist.angular.z &&
+
+    odom_msg_.twist.covariance[0] == odom_.twist.covariance[0] &&
+    odom_msg_.twist.covariance[7] == odom_.twist.covariance[7] 
+    )
+      return true;
+   else
+      return false;
+}
+
+void Odometry::copy(nav_msgs__msg__Odometry *odom_msg__){
+
+    //robot's position in x,y, and z
+    odom_msg__->pose.pose.position.x = odom_msg_.pose.pose.position.x; 
+    odom_msg__->pose.pose.position.y = odom_msg_.pose.pose.position.y; 
+    odom_msg__->pose.pose.position.z = odom_msg_.pose.pose.position.z; 
+
+    //robot's heading in quaternion
+    odom_msg__->pose.pose.orientation.x = odom_msg_.pose.pose.orientation.x;
+    odom_msg__->pose.pose.orientation.y = odom_msg_.pose.pose.orientation.y;
+    odom_msg__->pose.pose.orientation.z = odom_msg_.pose.pose.orientation.z;
+    odom_msg__->pose.pose.orientation.w = odom_msg_.pose.pose.orientation.w;
+
+    odom_msg__->pose.covariance[0] = odom_msg_.pose.covariance[0];
+    odom_msg__->pose.covariance[7] = odom_msg_.pose.covariance[7];
+    odom_msg__->pose.covariance[35] = odom_msg_.pose.covariance[35];
+
+    //linear speed from encoders
+    odom_msg__->twist.twist.linear.x = odom_msg_.twist.twist.linear.x;
+    odom_msg__->twist.twist.linear.y = odom_msg_.twist.twist.linear.y;
+    odom_msg__->twist.twist.linear.z = odom_msg_.twist.twist.linear.z;
+
+    //angular speed from encoders
+    odom_msg__->twist.twist.angular.x = odom_msg_.twist.twist.angular.x;
+    odom_msg__->twist.twist.angular.y = odom_msg_.twist.twist.angular.y;
+    odom_msg__->twist.twist.angular.z = odom_msg_.twist.twist.angular.z;
+
+    odom_msg__->twist.covariance[0] = odom_msg_.twist.covariance[0];
+    odom_msg__->twist.covariance[7] = odom_msg_.twist.covariance[7]; 
+}
+
 const void Odometry::euler_to_quat(float roll, float pitch, float yaw, float* q) 
 {
     float cy = cos(yaw * 0.5);

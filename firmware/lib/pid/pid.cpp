@@ -24,18 +24,15 @@ PID::PID(float min_val, float max_val, float kp, float ki, float kd):
 {
 }
 
-double PID::compute(float setpoint, float measured_value)
-{
+double PID::compute(float setpoint, float measured_value) {
     double error;
     double pid;
 
-    //setpoint is constrained between min and max to prevent pid from having too much error
     error = setpoint - measured_value;
     integral_ += error;
     derivative_ = error - prev_error_;
 
-    if(setpoint == 0 && error == 0)
-    {
+    if(setpoint == 0 && error == 0) {
         integral_ = 0;
         derivative_ = 0;
     }
@@ -43,18 +40,17 @@ double PID::compute(float setpoint, float measured_value)
     pid = (kp_ * error) + (ki_ * integral_) + (kd_ * derivative_);
     prev_error_ = error;
 
+    //setpoint is constrained between min and max to prevent pid from having too much error
     return constrain(pid, min_val_, max_val_);
 }
 
-void PID::resetAll()
-{
+void PID::resetAll() {
     prev_error_ = 0;
     integral_   = 0;
     derivative_ = 0;
 }
 
-void PID::updateConstants(float kp, float ki, float kd)
-{
+void PID::updateConstants(float kp, float ki, float kd) {
     kp_ = kp;
     ki_ = ki;
     kd_ = kd;
