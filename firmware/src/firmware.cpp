@@ -166,6 +166,7 @@ Kinematics kinematics(
 Odometry odometry;
 IMU imu;
 MAG mag;
+static unsigned publish_count = 0; // for debugging purposes, to see if the publishData is being called
 
 void flashLED(int n_times)
 {
@@ -320,6 +321,10 @@ void jointCallback(const void *msgin)
 
 void publishData()
 {
+    ++publish_count;
+    if (publish_count % 1000 == 0) {
+        syslog(LOG_INFO, "%s publish count %u", __FUNCTION__, publish_count);
+    }
     static unsigned skip_dip = 0;
     odom_msg = odometry.getData();
     imu_msg = imu.getData();
@@ -633,7 +638,7 @@ void loop() {
             }
             break;
         case AGENT_CONNECTED:
-            EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+            EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 3)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
             if (state == AGENT_CONNECTED)
             {
                 rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));

@@ -72,8 +72,8 @@ ROBOT ORIENTATION
 #define COUNTS_PER_REV2 1800                // wheel2 encoder's no of ticks per rev
 #define COUNTS_PER_REV3 450                 // wheel3 encoder's no of ticks per rev
 #define COUNTS_PER_REV4 450                 // wheel4 encoder's no of ticks per rev
-#define WHEEL_DIAMETER 0.08                 // wheel's diameter in meters
-#define LR_WHEELS_DISTANCE 0.160            // distance between left and right wheels
+#define WHEEL_DIAMETER 0.076                // wheel's diameter in meters
+#define LR_WHEELS_DISTANCE 0.166            // distance between left and right wheels
 #define PWM_BITS 10                         // PWM Resolution of the microcontroller
 #define PWM_FREQUENCY 20000                 // PWM Frequency
 #define SERVO_BITS 12                       // Servo PWM resolution
@@ -194,23 +194,28 @@ ROBOT ORIENTATION
 // and set IP of the ROS2 linux computer for the various services
 
 // Home network
-#define WIFI_AP_LIST {{"129WoodrowM", "Listen4wifi!"}, {NULL}}
-// #define WIFI_AP_LIST {{"129WoodrowAC", "129Robots"}, {NULL}}
-#define AGENT_IP { 192, 168, 4, 20 }  // home wifi
-#define SYSLOG_SERVER { 192, 168, 4, 20 }
-#define LIDAR_SERVER { 192, 168, 4, 20 }  // eg IP of the desktop computer
+// #define WIFI_AP_LIST {{"129WoodrowM", "Listen4wifi!"}, {NULL}}
+// #define AGENT_IP { 192, 168, 4, 20 }  // home wifi
+// #define SYSLOG_SERVER { 192, 168, 4, 20 }
+// #define LIDAR_SERVER { 192, 168, 4, 20 }  // eg IP of the desktop computer
 
 // Paul's cell hotspot
-// #define WIFI_AP_LIST {{"kiwi", "paulscell"}, {NULL}}
-// #define AGENT_IP { 10, 79, 2, 183 }
-// #define SYSLOG_SERVER { 10, 79, 2, 183 }
-// #define LIDAR_SERVER { 10, 79, 2, 183 }
+// #define WIFI_AP_LIST {{"Kiwi", "paulscell"}, {NULL}}
+// #define AGENT_IP { 10, 109, 116, 183 }
+// #define SYSLOG_SERVER { 10, 109, 116, 183 }
+// #define LIDAR_SERVER { 10, 109, 116, 183 }
 
 // Dallas Makerspace
 // #define WIFI_AP_LIST {{"DMS Member", "dms--109238"}, {NULL}}
-// #define AGENT_IP { 192, 168, 200, 145 }
-// #define SYSLOG_SERVER { 192, 168, 200, 145 }
-// #define LIDAR_SERVER { 192, 168, 200, 145 }
+// #define AGENT_IP { 192, 168, 200, 177 }
+// #define SYSLOG_SERVER { 192, 168, 200, 177 }
+// #define LIDAR_SERVER { 192, 168, 200, 177 }
+
+// Asus AC1900 router
+#define WIFI_AP_LIST {{"AsusAC1900", "129Robots"}, {NULL}}
+#define AGENT_IP { 192, 168, 1, 22 }
+#define SYSLOG_SERVER { 192, 168, 1, 22 }
+#define LIDAR_SERVER { 192, 168, 1, 22 }
 
 #define AGENT_PORT 8888
 

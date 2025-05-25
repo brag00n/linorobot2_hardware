@@ -189,14 +189,14 @@ ROBOT ORIENTATION
   #define PWM_MIN -PWM_MAX
 #endif
 
-#define AGENT_IP { 192, 168, 1, 100 }  // eg IP of the desktop computer
+#define AGENT_IP { 10, 72, 11, 183 }  // eg IP of the desktop computer
 #define AGENT_PORT 8888
 // Enable WiFi with null terminated list of multiple APs SSID and password
-#define WIFI_AP_LIST {{"WIFI_SSID", "WIFI_PASSWORD"}, {NULL}}
+#define WIFI_AP_LIST {{"Kiwi", "paulscell"}, {NULL}}
 #define WIFI_MONITOR 2 // min. period to send wifi signal strength to syslog
 #define USE_ARDUINO_OTA
 #define USE_SYSLOG
-#define SYSLOG_SERVER { 192, 168, 1, 100 }  // eg IP of the desktop computer
+#define SYSLOG_SERVER { 10, 72, 11, 183 }  // eg IP of the desktop computer
 #define SYSLOG_PORT 514
 #define DEVICE_HOSTNAME "esp32_wifi"
 #define APP_NAME "hardware"
@@ -204,7 +204,7 @@ ROBOT ORIENTATION
 #define LIDAR_RXD 14
 #define LIDAR_SERIAL 1 // uart number
 #define LIDAR_BAUDRATE 230400
-#define LIDAR_SERVER { 192, 168, 1, 100 }  // eg IP of the desktop computer
+#define LIDAR_SERVER { 10, 72, 11, 183 }  // eg IP of the desktop computer
 #define LIDAR_PORT 8889
 #define BAUDRATE 921600
 #define SDA_PIN 21 // specify I2C pins
@@ -233,6 +233,9 @@ const int16_t ADC_LUT[4096] = { /* insert adc_calibrate data here */ };
 // #define ECHO_PIN 32
 #define USE_SHORT_BRAKE // for shorter stopping distance
 // #define WDT_TIMEOUT 60 // Sec
+#define SERVO_PIN 19
+// Minniebot servo claw range: 1050 - 1450 microseconds
+#define SERVO_DEFAULT_US 1050 // default servo pulse width - jaws open
 #define BOARD_INIT { \
     Wire.begin(SDA_PIN, SCL_PIN); \
     Wire.setClock(400000); \
