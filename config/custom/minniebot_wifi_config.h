@@ -194,10 +194,10 @@ ROBOT ORIENTATION
 // and set IP of the ROS2 linux computer for the various services
 
 // Home network
-// #define WIFI_AP_LIST {{"129WoodrowM", "Listen4wifi!"}, {NULL}}
-// #define AGENT_IP { 192, 168, 4, 20 }  // home wifi
-// #define SYSLOG_SERVER { 192, 168, 4, 20 }
-// #define LIDAR_SERVER { 192, 168, 4, 20 }  // eg IP of the desktop computer
+#define WIFI_AP_LIST {{"129WoodrowM", "Listen4wifi!"}, {NULL}}
+#define AGENT_IP { 192, 168, 4, 20 }  // home wifi
+#define SYSLOG_SERVER { 192, 168, 4, 20 }
+#define LIDAR_SERVER { 192, 168, 4, 20 }  // eg IP of the desktop computer
 
 // Paul's cell hotspot
 // #define WIFI_AP_LIST {{"Kiwi", "paulscell"}, {NULL}}
@@ -212,10 +212,10 @@ ROBOT ORIENTATION
 // #define LIDAR_SERVER { 192, 168, 200, 177 }
 
 // Asus AC1900 router
-#define WIFI_AP_LIST {{"AsusAC1900", "129Robots"}, {NULL}}
-#define AGENT_IP { 192, 168, 1, 22 }
-#define SYSLOG_SERVER { 192, 168, 1, 22 }
-#define LIDAR_SERVER { 192, 168, 1, 22 }
+//#define WIFI_AP_LIST {{"AsusAC1900", "129Robots"}, {NULL}}
+//#define AGENT_IP { 192, 168, 1, 22 }
+//#define SYSLOG_SERVER { 192, 168, 1, 22 }
+//#define LIDAR_SERVER { 192, 168, 1, 22 }
 
 #define AGENT_PORT 8888
 
