@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifdef USE_BAMBOOV200_CONFIG
+    #include "custom/bamboov200_config.h"
+#endif
+
 #ifdef USE_BEEBO_CONFIG
     #include "custom/beebo_config.h"
 #endif
@@ -28,7 +32,7 @@
     #include "custom/dev_config.h"
 #endif
 
-#if !defined (USE_BEEBO_CONFIG) && !defined (USE_DEV_CONFIG) && !defined (USE_SQUARE_CONFIG) && !defined (USE_BEEBO_M_CONFIG)
+#if !defined (USE_BAMBOOV200_CONFIG) && !defined (USE_BEEBO_CONFIG) && !defined (USE_DEV_CONFIG) && !defined (USE_SQUARE_CONFIG) && !defined (USE_BEEBO_M_CONFIG)
     #include "lino_base_config.h"
 #endif
 
