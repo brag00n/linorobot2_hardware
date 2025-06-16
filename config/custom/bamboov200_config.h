@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef LINO_BASE_CONFIG_H
-#define LINO_BASE_CONFIG_H
+#ifndef BAMBOOV200_CONFIG_H
+#define BAMBOOV200_CONFIG_H
 
 #define LED_PIN 13 //used for debugging status
 

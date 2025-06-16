@@ -14,25 +14,71 @@
 
 #ifdef USE_BAMBOOV200_CONFIG
     #include "custom/bamboov200_config.h"
+    #define LINO_CONFIG
 #endif
 
-#ifdef USE_BEEBO_CONFIG
-    #include "custom/beebo_config.h"
-#endif
-
-#ifdef USE_BEEBO_M_CONFIG
-    #include "custom/beebo_m_config.h"
-#endif
-
-#ifdef USE_SQUARE_CONFIG
-    #include "custom/square_config.h"
+#ifdef USE_VATTENKAR_CONFIG
+    #include "custom/vattenkar_config.h"
+    #define LINO_CONFIG
 #endif
 
 #ifdef USE_DEV_CONFIG
     #include "custom/dev_config.h"
+    #define LINO_CONFIG
 #endif
 
-#if !defined (USE_BAMBOOV200_CONFIG) && !defined (USE_BEEBO_CONFIG) && !defined (USE_DEV_CONFIG) && !defined (USE_SQUARE_CONFIG) && !defined (USE_BEEBO_M_CONFIG)
+#ifdef USE_GENDRV_CONFIG
+    #include "custom/gendrv_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_GENDRV_WIFI_CONFIG
+    #include "custom/gendrv_wifi_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32_CONFIG
+    #include "custom/esp32_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32_WIFI_CONFIG
+    #include "custom/esp32_wifi_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32S2_CONFIG
+    #include "custom/esp32s2_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32S2_WIFI_CONFIG
+    #include "custom/esp32s2_wifi_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32S3_CONFIG
+    #include "custom/esp32s3_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_ESP32S3_WIFI_CONFIG
+    #include "custom/esp32s3_wifi_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_PICO2_CONFIG
+    #include "custom/pico2_config.h"
+    #define LINO_CONFIG
+#endif
+
+#ifdef USE_PICO_CONFIG
+    #include "custom/pico_config.h"
+    #define LINO_CONFIG
+#endif
+
+
+#if !defined (LINO_CONFIG) 
     #include "lino_base_config.h"
 #endif
 
