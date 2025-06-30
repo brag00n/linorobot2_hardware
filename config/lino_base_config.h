@@ -23,15 +23,14 @@
 // #define LINO_BASE MECANUM               // Mecanum drive robot
 
 //uncomment the motor driver you're using
-//#define USE_GENERIC_2_IN_MOTOR_DRIVER      // Motor drivers with 2 Direction Pins(INA, INB) and 1 PWM(ENABLE) pin ie. L298, L293, VNH5019
+#define USE_GENERIC_2_IN_MOTOR_DRIVER      // Motor drivers with 2 Direction Pins(INA, INB) and 1 PWM(ENABLE) pin ie. L298, L293, VNH5019
 // #define USE_GENERIC_1_IN_MOTOR_DRIVER   // Motor drivers with 1 Direction Pin(INA) and 1 PWM(ENABLE) pin.
 // #define USE_BTS7960_MOTOR_DRIVER        // BTS7970 Motor Driver
 // #define USE_ESC_MOTOR_DRIVER            // Motor ESC for brushless motors
-#define USE_RASPIMOTORHAT_MOTOR_DRIVER      // Motor drivers with 2 Direction Pins(INA, INB) and 1 PWM(ENABLE) pin ie. L298, L293, VNH5019
 
 //uncomment the IMU you're using
-//#define USE_GY85_IMU
-#define USE_MPU6050_IMU
+#define USE_GY85_IMU
+// #define USE_MPU6050_IMU
 // #define USE_MPU9150_IMU
 // #define USE_MPU9250_IMU
 // #define USE_QMI8658_IMU
@@ -97,7 +96,6 @@ ROBOT ORIENTATION
 // MOTOR PINS
 #ifdef USE_GENERIC_2_IN_MOTOR_DRIVER
   #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x, you can swap it with pin no 1 instead.
-  #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x, you can swap it with pin no 1 instead.
   #define MOTOR1_IN_A 20
   #define MOTOR1_IN_B 1 
 
@@ -118,7 +116,6 @@ ROBOT ORIENTATION
 #endif 
 
 #ifdef USE_GENERIC_1_IN_MOTOR_DRIVER
-  #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x, you can use pin no 1 instead.
   #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x, you can use pin no 1 instead.
   #define MOTOR1_IN_A 20
   #define MOTOR1_IN_B -1 //DON'T TOUCH THIS! This is just a placeholder
@@ -143,24 +140,16 @@ ROBOT ORIENTATION
   #define MOTOR1_PWM -1 //DON'T TOUCH THIS! This is just a placeholder
   #define MOTOR1_IN_A 21 // Pin no 21 is not a PWM pin on Teensy 4.x, you can use pin no 1 instead.
   #define MOTOR1_IN_B 20 // Pin no 20 is not a PWM pin on Teensy 4.x, you can use pin no 0 instead.
-  #define MOTOR1_IN_A 21 // Pin no 21 is not a PWM pin on Teensy 4.x, you can use pin no 1 instead.
-  #define MOTOR1_IN_B 20 // Pin no 20 is not a PWM pin on Teensy 4.x, you can use pin no 0 instead.
 
   #define MOTOR2_PWM -1 //DON'T TOUCH THIS! This is just a placeholder
-  #define MOTOR2_IN_A 5
-  #define MOTOR2_IN_B 6
   #define MOTOR2_IN_A 5
   #define MOTOR2_IN_B 6
 
   #define MOTOR3_PWM -1 //DON'T TOUCH THIS! This is just a placeholder
   #define MOTOR3_IN_A 22
   #define MOTOR3_IN_B 23
-  #define MOTOR3_IN_A 22
-  #define MOTOR3_IN_B 23
 
   #define MOTOR4_PWM -1 //DON'T TOUCH THIS! This is just a placeholder
-  #define MOTOR4_IN_A 4
-  #define MOTOR4_IN_B 3
   #define MOTOR4_IN_A 4
   #define MOTOR4_IN_B 3
 
@@ -169,7 +158,6 @@ ROBOT ORIENTATION
 #endif
 
 #ifdef USE_ESC_MOTOR_DRIVER
-  #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x. You can use pin no 1 instead.
   #define MOTOR1_PWM 21 //Pin no 21 is not a PWM pin on Teensy 4.x. You can use pin no 1 instead.
   #define MOTOR1_IN_A -1 //DON'T TOUCH THIS! This is just a placeholder
   #define MOTOR1_IN_B -1 //DON'T TOUCH THIS! This is just a placeholder

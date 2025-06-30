@@ -29,7 +29,6 @@ class MotorInterface
         }
 
         virtual void brake() = 0;
-        virtual bool initialize() = 0;
         void spin(int pwm)
         {
             if(invert_)
