@@ -5,27 +5,31 @@
 void ConnectorMicroROS::controlCallback(rcl_timer_t * timer, int64_t last_call_time){
     // execute timer callback
     if (timerCallback_ != NULL) {
-        timerCallback_(reinterpret_cast<Connector::timer_t*>(timer), last_call_time);
+        timerCallback_(reinterpret_cast<Connector::timer_t*>(timer), last_call_time,"ConnectorMicroROS");
     }
 }
 
-void ConnectorMicroROS::twistCallback(const geometry_msgs__msg__Twist* pTwist_msg){
-    twist_msg_.linear_x = pTwist_msg->linear.x;
-    twist_msg_.linear_y = pTwist_msg->linear.y;
-    twist_msg_.angular_z = pTwist_msg->angular.z;
+void ConnectorMicroROS::twistCallback(const void* ppTwist_msg){
+
+    const geometry_msgs__msg__Twist *pTwist_msg = reinterpret_cast<const geometry_msgs__msg__Twist *>(ppTwist_msg);
+    Twist_t pTwist_msg_;
+    pTwist_msg_.linear_x = pTwist_msg->linear.x;
+    pTwist_msg_.linear_y = pTwist_msg->linear.y;
+    pTwist_msg_.angular_z = pTwist_msg->angular.z;
 
     if(twistCallback_ != NULL)
-        twistCallback_(&twist_msg_);
+        twistCallback_(&pTwist_msg_,"ConnectorMicroROS");
 }
 
 
-void ConnectorMicroROS::jointCallback(sensor_msgs__msg__JointState *pJointState_msg){
-    //setJointStateList(pJointState_msg);
-    jointCallback_(&joint_state_msg);
-
+void ConnectorMicroROS::jointCallback(const void * pJointState_msg){
+    const sensor_msgs__msg__JointState *joint_msg = reinterpret_cast<const sensor_msgs__msg__JointState *>(pJointState_msg);
+    // if (jointCallback_ != NULL) {
+    //     jointCallback_(joint_state_list, "ConnectorMicroROS");
+    // }
 }
 
-bool ConnectorMicroROS::initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback){
+bool ConnectorMicroROS::initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback){
     
     if (isSyslog) syslog(LOG_DEBUG, "   ConnectorMicroROS::initAgent\n");
     
@@ -113,22 +117,22 @@ bool ConnectorMicroROS::initAgent(const connectorTimerCallbak_t ptimerCallback,c
         &control_timer,
         &support,
         RCL_MS_TO_NS(control_timeout),
-        controlCallback
+        ConnectorMicroROS::controlCallback
     ));
     RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
-    //RCCHECK(rclc_executor_add_subscription(
+    RCCHECK(rclc_executor_add_subscription(
         &executor,
         &twist_subscriber,
         &twist_msg,
-        twistCallback,
+        ConnectorMicroROS::twistCallback,
         ON_NEW_DATA
-    //));
+    ));
 #ifdef JOINT_STATE_SUBSCRIBER
     RCCHECK(rclc_executor_add_subscription(
         &executor,
         &joint_subscriber,
         &joint_msg,
-        jointCallback,
+        ConnectorMicroROS::jointCallback,
         ON_NEW_DATA
     ));
 
@@ -182,13 +186,22 @@ bool ConnectorMicroROS::initAgent(const connectorTimerCallbak_t ptimerCallback,c
     RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
 
 #ifdef MICRO_ROS_TRANSPORT_ARDUINO_WIFI
-    set_microros_net_transports(AGENT_IP, AGENT_PORT);
+    IPAddress agent_ip;
+    agent_ip.fromString(AGENT_IP);
+    set_microros_net_transports(agent_ip, std::stoi(AGENT_PORT));
 #else
     set_microros_serial_transports(Serial);
 #endif
 
-#endif // #ifdef ENABLE_MICRO_ROS
+
+#endif  // #ifdef ENABLE_MICRO_ROS
+
+    syncTime();
     return true;
+}
+
+bool ConnectorMicroROS::isAvailable(){
+    return (state==AGENT_CONNECTED);
 }
 
 bool ConnectorMicroROS::isAvailable(int timeout_ms, int attempts){
@@ -203,9 +216,12 @@ bool ConnectorMicroROS::pingAgent(int timeout_ms, int attempts){
     switch (state)
     {
         case WAITING_AGENT:         
-            ROS_EXECUTE_EVERY_N_MS(500, 
-                if (isSyslog) syslog(LOG_DEBUG, "check agent availability\n"); 
+            ROS_EXECUTE_EVERY_N_MS(10000, 
+                if (isSyslog) syslog(LOG_DEBUG, "   check ROS agent availability\n"); 
                 state = (isAvailable(100,1)) ? AGENT_AVAILABLE : WAITING_AGENT;
+                if (state == WAITING_AGENT) {
+                    if (isSyslog) syslog(LOG_INFO, "   ROS agent unavailable\n");
+                }
             );
             return false;
             break;
@@ -216,7 +232,7 @@ bool ConnectorMicroROS::pingAgent(int timeout_ms, int attempts){
             state = (initROSOK&&timeOK) ? AGENT_CONNECTED : WAITING_AGENT;
             if (state == WAITING_AGENT) destroyEntities();
             if (state == AGENT_CONNECTED) {
-                if (isSyslog) syslog(LOG_INFO, "   agent ROS connected\n");
+                if (isSyslog) syslog(LOG_INFO, "   ROS agent connected\n");
              }
             return false;
             break;
@@ -228,7 +244,7 @@ bool ConnectorMicroROS::pingAgent(int timeout_ms, int attempts){
             return (state==AGENT_CONNECTED);
             break;
         case AGENT_DISCONNECTED:
-            if (isSyslog) syslog(LOG_INFO, "   agent ROS disconnected\n");
+            if (isSyslog) syslog(LOG_INFO, "   ROS agent disconnected\n");
 
             destroyEntities();
             state = WAITING_AGENT;
@@ -274,41 +290,42 @@ bool ConnectorMicroROS::destroyEntities(){
 }
 
 bool ConnectorMicroROS::listenAgent(long pWait_time_ms = 0){
-    #ifdef ENABLE_MICRO_ROS
+#ifdef ENABLE_MICRO_ROS
     if (pWait_time_ms > 0) {
         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(pWait_time_ms));
     } else {
         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
     }
-    #else
+#else
 
     ROS_EXECUTE_EVERY_N_MS(100,
-        if (isSyslog) syslog(LOG_DEBUG, "--- START ConnectorMicroROS::listenAgent timerCallback ---\n");
         if (timerCallback_ != NULL) {
-            timer_t pTimer; // Create a timer_t instance
-            timerCallback_(&pTimer, 0); // Pass appropriate arguments based on the function's definition
+            if (isSyslog) syslog(LOG_DEBUG, "--- START ConnectorMicroROS::listenAgent timerCallback ---\n");
+            rcl_timer_t pTimer;
+            controlCallback(&pTimer, 0); // Pass appropriate arguments based on the function's definition
+            if (isSyslog) syslog(LOG_DEBUG, "--- END ConnectorMicroROS::listenAgent timerCallbackHello  ---\n");
         }
-        if (isSyslog) syslog(LOG_DEBUG, "--- END ConnectorMicroROS::listenAgent timerCallbackHello  ---\n");
-    );
-    if (twistCallback_ != NULL) {
-        // if (twist_previous_msg_.linear_x != twist_msg_.linear_x ||
-        //     twist_previous_msg_.linear_y != twist_msg_.linear_y ||
-        //     twist_previous_msg_.angular_z != twist_msg_.angular_z) {
-            if (isSyslog) syslog(LOG_DEBUG, ("   ConnectorMicroROS::listenAgent Twist:{x:" + String(twist_msg_.linear_x) + ",y:" + String(twist_msg_.linear_y) + ",z:" + String(twist_msg_.angular_z) + "}\n").c_str());
-            twistCallback_(&twist_msg_);
-        //     twist_previous_msg_.linear_x = twist_msg_.linear_x;
-        //     twist_previous_msg_.linear_y = twist_msg_.linear_y;
-        //     twist_previous_msg_.angular_z = twist_msg_.angular_z;
-        // }
-    }   
-    if (jointCallback_ != NULL) {
-        jointCallback_(&joint_msg);
-    }
-    if (pidCallback_ != NULL) {
-        pidCallback_(&Pid_);
-    }
 
-    #endif
+        if (twistCallback_ != NULL) {
+            // if (twist_previous_msg_.linear_x != twist_msg_.linear_x ||
+            //     twist_previous_msg_.linear_y != twist_msg_.linear_y ||
+            //     twist_previous_msg_.angular_z != twist_msg_.angular_z) {
+                if (isSyslog) syslog(LOG_DEBUG, ("   ConnectorMicroROS::listenAgent Twist:{x:" + String(twist_msg_.linear_x) + ",y:" + String(twist_msg_.linear_y) + ",z:" + String(twist_msg_.angular_z) + "}\n").c_str());
+                twistCallback_(&twist_msg_,"ConnectorMicroROS");
+            //     twist_previous_msg_.linear_x = twist_msg_.linear_x;
+            //     twist_previous_msg_.linear_y = twist_msg_.linear_y;
+            //     twist_previous_msg_.angular_z = twist_msg_.angular_z;
+            // }
+        }   
+        // if (jointCallback_ != NULL) {
+        //     jointCallback_(joint_state_list, "ConnectorMicroROS");
+        // }
+        if (pidCallback_ != NULL) {
+            pidCallback_(&Pid_,"ConnectorMicroROS");
+        }
+    );
+
+#endif
     return true;
 }
 
@@ -627,11 +644,12 @@ void ConnectorMicroROS::publishOdom(Odometry::Odometry_data pOdometry_data){
 
 void ConnectorMicroROS::publishBattery(Battery::Battery_t pBattery_msg){
     setBattery(pBattery_msg);
+    if (isSyslog) syslog(LOG_DEBUG, ("   publishBattery START: voltage=" + String(battery_msg.voltage) +"V , current="+String(battery_msg.current)+"A ,percentage="+String(battery_msg.percentage)+"%\n").c_str());
 
     #ifdef ENABLE_MICRO_ROS
     RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
     #endif
 
-    if (isSyslog) syslog(LOG_DEBUG, ("   Battery: voltage=" + String(battery_msg.voltage) +"V , current="+String(battery_msg.current)+"A ,percentage="+String(battery_msg.percentage)+"%\n").c_str());
+    if (isSyslog) syslog(LOG_DEBUG, ("   publishBattery END: voltage=" + String(battery_msg.voltage) +"V , current="+String(battery_msg.current)+"A ,percentage="+String(battery_msg.percentage)+"%\n").c_str());
 }
 

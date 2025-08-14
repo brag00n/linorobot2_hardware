@@ -39,7 +39,7 @@
 #include "battery.h"
 #include "range.h"
 #include "lidar.h"
-#include "wifis.h"
+//#include "wifis.h"
 #include "ota.h"
 #include "pwm.h"
 #include "oled_ctrl.h"

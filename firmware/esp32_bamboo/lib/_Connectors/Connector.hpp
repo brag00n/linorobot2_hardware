@@ -20,10 +20,9 @@
 
 #define NR_OF_JOINTS 8 // number of joints
 
-
 class Connector {
 
-  private:
+  protected:
 
   public:
     struct joint_state_t: Device::Device_t {
@@ -57,28 +56,27 @@ class Connector {
         String encryption_type;
     } wifi_msg_;
 
-typedef struct timer_impl_s timer_impl_t;
-/// Structure which encapsulates a ROS Timer.
-typedef struct timer_s
-{
-/// Private implementation pointer.
-timer_impl_t * impl;
-} timer_t;
+    typedef struct timer_impl_s timer_impl_t;
+    /// Structure which encapsulates a ROS Timer.
+    typedef struct timer_s
+    {
+    /// Private implementation pointer.
+    timer_impl_t * impl;
+    } timer_t;
 
-  typedef void (* connectorTimerCallbak_t)(timer_t *, int64_t);
-
-  //typedef void (* connectorTimerCallbak_t)(void * timer, long pTimerId);
-  typedef void (* connectorCallbak_t)(const void* pMsg);
-  typedef void (* connectorTwistCallbak_t)(const Connector::Twist_t* pTwist);
-  typedef void (* connectorJointCallbak_t)(const Connector::joint_state_t* pJointState);
-  typedef void (* connectorPidCallbak_t)(const Connector::Pid_t* pPid);
+    typedef void (* connectorTimerCallbak_t)(timer_t * timer, int64_t last_call_time,String source);
+    typedef void (* connectorCallbak_t)(const void* pMsg, String pSource);
+    typedef void (* connectorTwistCallbak_t)(const Connector::Twist_t* pTwist, String pSource);
+    typedef void (* connectorJointCallbak_t)(const Connector::joint_state_t* pJointState, String pSource);
+    typedef void (* connectorPidCallbak_t)(const Connector::Pid_t* pPid, String pSource);
 
     Odometry::Odometry_data odom_msg;
     Battery::Battery_t battery_msg;
     MAGInterface::Mag_t mag_msg;
     Range::Range_t range_msg;
 
-    virtual bool initAgent(const connectorTimerCallbak_t pCallback,Connector::connectorTwistCallbak_t ptwistCallback,Connector::connectorCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback) =0;
+    virtual bool initAgent(const connectorTimerCallbak_t pCallback,Connector::connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback) =0;
+    virtual bool isAvailable() =0;
     virtual bool pingAgent(int timeout_ms, int attempts) =0;
     virtual bool listenAgent(long pWait_time_ms)=0;
     virtual void publishImu(IMUInterface::Imu_t pImu_msg)=0;
@@ -109,13 +107,14 @@ timer_impl_t * impl;
     virtual void setJointStateList(joint_state_t* pJointStateList)=0;
     virtual bool syncTime() = 0;
     virtual timespec getTime() = 0;
+    
 #ifndef ENABLE_MICRO_ROS
-  private:
-    Connector::connectorCallbak_t twistCallback_;
-    Connector::connectorCallbak_t jointCallback_;
-    Connector::connectorCallbak_t pidCallback_;
-    Connector::connectorTimerCallbak_t timerCallback_;
+//   private:
+//     Connector::connectorCallbak_t twistCallback_;
+//     Connector::connectorCallbak_t jointCallback_;
+//     Connector::connectorCallbak_t pidCallback_;
+//     Connector::connectorTimerCallbak_t timerCallback_;
 #endif
 };
 
-#endif // #define ROS_COMMUNICATION_H
+#endif // #define CONNNECTOR_H

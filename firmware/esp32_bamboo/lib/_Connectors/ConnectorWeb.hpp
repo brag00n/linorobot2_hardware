@@ -21,6 +21,7 @@
 #ifdef ENABLE_MICRO_ROS
 // include all micro-ros library (used for PROD)
 #include <micro_ros_platformio.h>
+#include <rclc/timer.h>
 
 #else
 // include ros scructures (used for TEST)
@@ -85,7 +86,8 @@ class ConnectorWeb : public Connector {
   public:
     joint_state_t joint_state_[NR_OF_JOINTS];
 
-    bool initAgent(const connectorTimerCallbak_t pCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback);
+    bool initAgent(const connectorTimerCallbak_t pCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback);
+    bool isAvailable();
     bool pingAgent(int timeout_ms, int attempts);
     bool listenAgent(long pWait_time_ms);
     void publishImu(IMUInterface::Imu_t pImu_msg);
@@ -111,18 +113,19 @@ class ConnectorWeb : public Connector {
     };
     bool syncTime();
     struct timespec getTime();
-#ifndef ENABLE_MICRO_ROS
   private:
+      Kinematics* pKinematics_=NULL;
+//#ifndef ENABLE_MICRO_ROS
     Connector::connectorTwistCallbak_t twistCallback_;
-    rclc_subscription_callback_t jointCallback_;
+    Connector::connectorJointCallbak_t jointCallback_;
     Connector::connectorPidCallbak_t pidCallback_;
-    connectorTimerCallbak_t timerCallback_;
+    Connector::connectorTimerCallbak_t timerCallback_;
+    //connectorTimerCallbak_t timerCallback_;
     String jsonFeedbackWeb = "";
     JsonDocument jsonCmdReceive;
     JsonDocument jsonInfoSend;
     JsonDocument jsonInfoHttp;
     Battery::Battery_t battery_msg;
-    Kinematics* pKinematics_=NULL;
     DeviceWifi::DeviceWifi_t deviceWifi_;
 
     // used for joint state
@@ -136,7 +139,7 @@ class ConnectorWeb : public Connector {
     double JointStatePosition[NR_OF_JOINTS];
     double ReqStateVelocity[NR_OF_JOINTS];
     double ReqStatePosition[NR_OF_JOINTS];
-#endif
+//#endif
 
 };
 

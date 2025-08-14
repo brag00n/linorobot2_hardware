@@ -79,9 +79,9 @@ class IMUInterface{
 
         IMUInterface()
         {
-            #ifdef ENABLE_MICRO_ROS
-            imu_msg_.header.frame_id = micro_ros_string_utilities_set(imu_msg_.header.frame_id, "imu_link");
-            #endif
+            // #ifdef ENABLE_MICRO_ROS
+            // imu_msg_.header.frame_id = micro_ros_string_utilities_set(imu_msg_.header.frame_id, "imu_link");
+            // #endif
         }
 
         virtual IMUInterface::Vector_t readAccelerometer() = 0;

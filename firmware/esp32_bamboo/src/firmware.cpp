@@ -436,7 +436,7 @@ void publishData()
     mag_msg.header.stamp.sec = time_stamp.tv_sec;
     mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
   #endif // ENABLE_CONNECTOR_ROS
-#endif
+#endif // USE_FAKE_MAG
 #ifndef USE_FAKE_MAG
 
 #ifdef ENABLE_CONNECTOR_ROS
@@ -446,9 +446,9 @@ void publishData()
 #ifdef ENABLE_CONNECTOR_WEB
     connectorWeb.publishMag(mag_msg);
 #endif // ENABLE_CONNECTOR_WEB
-#endif // ENABLE_DEVICE_MAG
+#endif // USE_FAKE_MAG
 
-#endif
+#endif // ENABLE_DEVICE_MAG
 
 #ifdef ENABLE_DEVICE_BATTERY
     EXECUTE_EVERY_N_MS(BATTERY_TIMER, {
@@ -465,15 +465,18 @@ void publishData()
         if (isSyslog) syslog(LOG_DEBUG, ("   battery voltage:" + String(prev_voltage) + "V, current:" + String(prev_current) + "A\n").c_str());
 
 #ifdef ENABLE_DEVICE_OLED
+        // String status= "Ready: ";
+        // status += String("ROS(") + (connectorROS.isAvailable() ? "OK" : "KO") + ")";
+        // status += String("WEB(") + (connectorWeb.isAvailable() ? "OK" : "KO") + ")";
         update_oled(NULL,
-            "started", 
-            ("batt: " + String(prev_voltage) + "V, " + String(prev_current) + "A").c_str(), 
+            "Ready",
+            (String("batt: ") + String(prev_voltage) + "V, " + String(prev_current) + "A").c_str(),
             NULL
         );
 #endif // ENABLE_DEVICE_OLED
 
 #ifdef ENABLE_CONNECTOR_WEB
-        wifiDevice.read();
+        //wifiDevice.read();
         connectorWeb.publishWifi(wifiDevice.getData());
 #endif // ENABLE_CONNECTOR_WEB
 
@@ -503,19 +506,19 @@ void publishData()
 
 }
 
-void controlCallback(Connector::timer_t * timer, int64_t last_call_time)
+void controlCallback(Connector::timer_t * timer, int64_t last_call_time,String source)
 {
     //RCLC_UNUSED(last_call_time);
     if (timer != NULL)
     {
-       if (isSyslog) syslog(LOG_DEBUG, "controlCallback\n");
+       if (isSyslog) syslog(LOG_DEBUG, ("controlCallback, source=" + String(source) + "\n").c_str());
        moveBase();
        publishData();
     }
 
 }
 
-void twistCallback(const Connector::Twist_t* pTwist){
+void twistCallback(const Connector::Twist_t* pTwist,String source){
 #ifdef ENABLE_CONNECTOR_ROS
     connectorROS.setTwist(pTwist->linear_x,pTwist->linear_y , pTwist->angular_z);
 #endif // ENABLE_CONNECTOR_ROS
@@ -526,15 +529,15 @@ void twistCallback(const Connector::Twist_t* pTwist){
 }
 
 
-void jointCallback(const void *msgin)
+void jointCallback(const Connector::joint_state_t* pJointState, String source)
 {
     #ifdef JOINT_STATE_SUBSCRIBER
     if (isSyslog) syslog(LOG_DEBUG, "jointCallback\n");
     #endif
 }
 
-void pidCallback(const Connector::Pid_t* pPid){
-    if (isSyslog) syslog(LOG_INFO, ("   pidCallback: P:" + String(pPid->P) + ", I:" + String(pPid->I) + ", D:" + String(pPid->D) + "\n").c_str());
+void pidCallback(const Connector::Pid_t* pPid, String source){
+    if (isSyslog) syslog(LOG_DEBUG, ("   pidCallback: P:" + String(pPid->P) + ", I:" + String(pPid->I) + ", D:" + String(pPid->D) + "\n").c_str());
 #ifdef ENABLE_DEVICE_PID
     motor1_pid.updateConstants(pPid->P, pPid->I, pPid->D);
     motor2_pid.updateConstants(pPid->P, pPid->I, pPid->D);
@@ -708,16 +711,15 @@ void setup()
     update_oled(NULL, "Init Web Agent", NULL, NULL);
     connectorWeb.setKinematics(&kinematics);
     connectorWeb.setPID(K_P, K_I, K_D);
-    connectorWeb.initAgent(NULL,*twistCallback,NULL,*pidCallback);
+    connectorWeb.initAgent(*controlCallback,*twistCallback,*jointCallback,*pidCallback);
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n"); 
 #endif // ENABLE_CONNECTOR_WEB
 
 #ifdef ENABLE_CONNECTOR_ROS
     if (isSyslog) syslog(LOG_INFO, "--- init Agent ROS\n");
     update_oled(NULL, "Init ROS Agent", NULL, NULL);
-    connectorROS.initAgent(*controlCallback,NULL,*jointCallback,NULL);
     connectorROS.setPID(K_P, K_I, K_D);
-    connectorROS.syncTime(); // synchronize time with the agent
+    connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,*pidCallback);
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n");
 #endif // ENABLE_CONNECTOR_ROS
 
@@ -725,7 +727,15 @@ void setup()
 #ifdef BOARD_INIT_LATE // board specific setup
     BOARD_INIT_LATE
 #endif
-    update_oled(NULL, "Ready", NULL, NULL);
+
+    // String status= "Ready: ";
+    // status += String("ROS(") + (connectorROS.isAvailable() ? "OK" : "KO") + ")";
+    // status += String("WEB(") + (connectorWeb.isAvailable() ? "OK" : "KO") + ")";
+    update_oled(NULL,
+        "Ready",
+        NULL,
+        NULL
+    );
 
     if (isSyslog) syslog(LOG_INFO, "=========END setup() =========\n");
 }

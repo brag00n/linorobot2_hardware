@@ -33,9 +33,9 @@ class MAGInterface
         struct Mag_t{
             MAGInterface::Vector_t magnetic_field;
             float magnetic_field_covariance[9];
-            #ifdef ENABLE_MICRO_ROS
-            std_msgs__msg__Header header;
-            #endif
+            // #ifdef ENABLE_MICRO_ROS
+            // std_msgs__msg__Header header;
+            // #endif
         };
     protected:
     Mag_t mag_msg_;
@@ -44,9 +44,9 @@ class MAGInterface
     public:
         MAGInterface()
         {
-            #ifdef ENABLE_MICRO_ROS
-            mag_msg_.header.frame_id = micro_ros_string_utilities_set(mag_msg_.header.frame_id, "imu_link");
-            #endif
+            // #ifdef ENABLE_MICRO_ROS
+            // mag_msg_.header.frame_id = micro_ros_string_utilities_set(mag_msg_.header.frame_id, "imu_link");
+            // #endif
         }
 
         virtual MAGInterface::Vector_t readMagnetometer() = 0;

@@ -70,7 +70,7 @@ Battery& Battery::readBattery()
   return *this;
 }
 
-/** https://github.com/rlogiacco/BatterySense/blob/master/battery.h
+/** https://github.com/rlogiacco/BatterySense/blob/master/Battery.h
  *
  * Symmetric sigmoidal approximation
  * https://www.desmos.com/calculator/7m9lu26vpy

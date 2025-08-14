@@ -32,26 +32,14 @@ void handleRoot(){
   } while (0)
 
 
-void ConnectorWeb::controlCallback(rcl_timer_t * timer, int64_t last_call_time){
-
-}
-
-void ConnectorWeb::twistCallback(const void * msgin){
-}
-
-
-void ConnectorWeb::jointCallback(const void *msgin){
-
-}
-
-bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback){
+bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback){
     
     if (isSyslog) syslog(LOG_DEBUG, "   ConnectorWeb::initAgent\n");
 
-    timerCallback_ = ptimerCallback;
-    twistCallback_ = ptwistCallback; 
-    jointCallback_ = pJointCallback;
-    pidCallback_ = pPidCallback;
+    ConnectorWeb::timerCallback_ = ptimerCallback;
+    ConnectorWeb::twistCallback_ = ptwistCallback; 
+    ConnectorWeb::jointCallback_ = pJointCallback;
+    ConnectorWeb::pidCallback_ = pPidCallback;
 
 
     webServer.on("/", handleRoot);
@@ -85,9 +73,9 @@ bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connec
                     twist_msg_.linear_y = vel.linear_y;
                     twist_msg_.angular_z = vel.angular_z;
                     if (!(jsonCmdReceive["L"].isNull() || jsonCmdReceive["R"].isNull())){
-                        if (twistCallback_ != NULL) { 
+                        if (ConnectorWeb::twistCallback_ != NULL) { 
                             if (isSyslog) syslog(LOG_DEBUG, ("    ConnectorWeb::listenAgent (on js cmd 1): cmd:{L:" + String(jsonCmdReceive["L"].as<float>()) + ",R:" + String(jsonCmdReceive["R"].as<float>()) + "},Twist:{x:" + String(twist_msg_.linear_x) + ",y:" + String(twist_msg_.linear_y) + ",z:" + String(twist_msg_.angular_z) + "}\n").c_str());
-                            twistCallback_(&twist_msg_);
+                            ConnectorWeb::twistCallback_(&twist_msg_,"ConnectorWeb");
                         }
                     }
                 break;
@@ -98,9 +86,9 @@ bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connec
                 if (!jsonCmdReceive["I"].isNull()) Pid_.I = jsonCmdReceive["I"].as<float>();
                 if (!jsonCmdReceive["D"].isNull()) Pid_.D = jsonCmdReceive["D"].as<float>();
                 if (!(jsonCmdReceive["P"].isNull() || jsonCmdReceive["I"].isNull() || jsonCmdReceive["D"].isNull())){
-                    if (pidCallback_ != NULL) {
+                    if (ConnectorWeb::pidCallback_ != NULL) {
                         if (isSyslog) syslog(LOG_DEBUG, ("    ConnectorWeb::listenAgent (on js cmd 2): Pid_:{x:" + String(Pid_.P) + ",y:" + String(Pid_.I) + ",z:" + String(Pid_.D) + "}\n").c_str());
-                        pidCallback_(&Pid_);
+                        ConnectorWeb::pidCallback_(&Pid_,"ConnectorWeb");
                     }
                 }
                 break;
@@ -125,7 +113,7 @@ bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connec
                 jsonInfoHttp["pan"]  = joint_state_[0].velocity;
 		        jsonInfoHttp["tilt"] = joint_state_[1].velocity;
 
-                if (isSyslog) syslog(LOG_DEBUG, ("   ConnectorWeb::listenAgent CmdReceive[T]=" + String(jsonCmdReceive["T"].as<int>()) + ", Response={L:" + String(jsonInfoHttp["L"].as<float>()) + ",R:" + String(jsonInfoHttp["R"].as<float>()) + ",pan:" + String(jsonInfoHttp["pan"].as<float>()) + ",tilt:" + String(jsonInfoHttp["tilt"].as<float>()) +  ",v:" + String(jsonInfoHttp["v"].as<float>()) + "}\n").c_str());
+                if (isSyslog) syslog(LOG_INFO, ("   ConnectorWeb::listenAgent CmdReceive[T]=" + String(jsonCmdReceive["T"].as<int>()) + ", Response={L:" + String(jsonInfoHttp["L"].as<float>()) + ",R:" + String(jsonInfoHttp["R"].as<float>()) + ",pan:" + String(jsonInfoHttp["pan"].as<float>()) + ",tilt:" + String(jsonInfoHttp["tilt"].as<float>()) +  ",v:" + String(jsonInfoHttp["v"].as<float>()) + "}\n").c_str());
                 break;
             case 405: // OUTPUT DATA request
                 jsonInfoHttp.clear();
@@ -181,6 +169,10 @@ bool ConnectorWeb::initAgent(const connectorTimerCallbak_t ptimerCallback,connec
     return true;
 }
 
+bool ConnectorWeb::isAvailable(){
+    return WiFi.status() == WL_CONNECTED; // Check if WiFi is connected
+}
+
 bool ConnectorWeb::pingAgent(int timeout_ms, int attempts){
     return true;
 }
@@ -190,18 +182,18 @@ bool ConnectorWeb::listenAgent(long pWait_time_ms = 0){
     webServer.handleClient();
     WEB_EXECUTE_EVERY_N_MS(100,
         if (isSyslog) syslog(LOG_DEBUG, "--- START listenAgent ---\n");
-        if (timerCallback_ != NULL) {
-            timer_t control_timer;
-            timerCallback_(&control_timer, 0); // Pass the correct type pointer directly
+        if (ConnectorWeb::timerCallback_ != NULL) {
+            Connector::timer_t control_timer;
+            ConnectorWeb::timerCallback_(&control_timer, 0,"ConnectorWeb"); // Pass the correct type pointer directly
         }
         // if (twistCallback_ != NULL) {
         //         if (isSyslog) syslog(LOG_DEBUG, "    Calling twistCallback_...\n");
         //         if (isSyslog) syslog(LOG_INFO, ("    ConnectorWeb::listenAgent Twist:{x:" + String(twist_msg_.linear_x) + ",y:" + String(twist_msg_.linear_y) + ",z:" + String(twist_msg_.angular_z) + "}\n").c_str());
-        //         twistCallback_(&twist_msg_);
+        //         twistCallback_(&twist_msg_,"ConnectorWeb");
         // }   
-        if (jointCallback_ != NULL) {
+        if (ConnectorWeb::jointCallback_ != NULL) {
             for(int i=0; i<NR_OF_JOINTS; i++){
-                jointCallback_(&joint_state_[i]);
+                ConnectorWeb::jointCallback_(&joint_state_[i],"ConnectorWeb"); 
             }
         }
         if (isSyslog) syslog(LOG_DEBUG, "--- END listenAgent ---\n");
@@ -243,9 +235,9 @@ void ConnectorWeb::setImu(float ax, float ay, float az, float gx, float gy, floa
     imu_msg.orientation.z = qz;
     imu_msg.orientation.w = qw;
 
-    #ifdef ENABLE_MICRO_ROS
-    imu_msg.header.frame_id = micro_ros_string_utilities_set(imu_msg.header.frame_id, "imu_link");
-    #endif
+    // #ifdef ENABLE_MICRO_ROS
+    // imu_msg.header.frame_id = micro_ros_string_utilities_set(imu_msg.header.frame_id, "imu_link");
+    // #endif
 }
 
 void ConnectorWeb::setMag(float x, float y, float z){
@@ -426,7 +418,7 @@ void ConnectorWeb::publishMag(MAGInterface::Mag_t pMag_msg){
     // mag_msg.header.stamp.sec = time_stamp.tv_sec;
     // mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
 
-    if (isSyslog) syslog(LOG_DEBUG, ("   Mag: (x,y,z) mag.field   =(" + String(mag_msg.magnetic_field.x) +","+String(mag_msg.magnetic_field.y)+","+String(mag_msg.magnetic_field.z)+")\n").c_str());
+    if (isSyslog) syslog(LOG_INFO, ("   Mag: (x,y,z) mag.field   =(" + String(mag_msg.magnetic_field.x) +","+String(mag_msg.magnetic_field.y)+","+String(mag_msg.magnetic_field.z)+")\n").c_str());
 }
 
 void ConnectorWeb::publishOdom(Odometry::Odometry_data pOdometry_data){

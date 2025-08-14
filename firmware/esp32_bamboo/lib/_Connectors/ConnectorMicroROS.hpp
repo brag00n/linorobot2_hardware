@@ -3,6 +3,9 @@
 
 #include "Connector.hpp"
 #include <Arduino.h>
+#include <string>
+#include <iostream>
+
 #include "odometry.h"
 #include "imu_interface.h"
 #include "mag_interface.h"
@@ -15,6 +18,21 @@
 #ifdef ENABLE_MICRO_ROS
 // include all micro-ros library (used for PROD)
 #include <micro_ros_platformio.h>
+
+#include <rcl/rcl.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+#include <rclc/timer.h>
+#include <rmw_microros/ping.h>
+#include <nav_msgs/msg/odometry.h>
+#include <sensor_msgs/msg/imu.h>
+#include <sensor_msgs/msg/joint_state.h>
+#include <sensor_msgs/msg/magnetic_field.h>
+#include <sensor_msgs/msg/battery_state.h>
+#include <sensor_msgs/msg/range.h>
+#include <geometry_msgs/msg/twist.h>
+#include <geometry_msgs/msg/vector3.h>
+#include <micro_ros_utilities/string_utilities.h>
 
 #else
 // include ros scructures (used for TEST)
@@ -33,7 +51,7 @@
 #endif
 
 #ifndef RCCHECK
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ErrorLoopCallback(temp_rc);}}
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){/*ErrorLoopCallback(temp_rc);*/}}
 #endif
 #ifndef RCSOFTCHECK
 #define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
@@ -54,26 +72,6 @@
 #endif
 
 
-#ifdef ENABLE_MICRO_ROS
-#ifdef MICRO_ROS_TRANSPORT_ARDUINO_WIFI
-// remove wifi initialization code from wifi transport
-static inline void set_microros_net_transports(IPAddress agent_ip, uint16_t agent_port)
-{
-    static struct micro_ros_agent_locator locator;
-    locator.address = agent_ip;
-    locator.port = agent_port;
-
-    rmw_uros_set_custom_transport(
-        false,
-        (void *) &locator,
-        platformio_transport_open,
-        platformio_transport_close,
-        platformio_transport_write,
-        platformio_transport_read
-    );
-}
-#endif
-#endif
 
 // #ifndef ERROR_LOOP_CALLBACK
 // void ErrorLoopCallback(int error_code) {
@@ -104,6 +102,11 @@ static inline void set_microros_net_transports(IPAddress agent_ip, uint16_t agen
 
 #define NR_OF_JOINTS 8 // number of joints
 
+static Connector::connectorTwistCallbak_t twistCallback_=NULL;
+static Connector::connectorJointCallbak_t jointCallback_=NULL;
+static Connector::connectorPidCallbak_t pidCallback_=NULL;
+static Connector::connectorTimerCallbak_t timerCallback_=NULL;
+
 class ConnectorMicroROS : public Connector {
 
   private:
@@ -115,7 +118,7 @@ class ConnectorMicroROS : public Connector {
     rcl_publisher_t range_publisher;
 
     rcl_subscription_t joint_subscriber;
-    sensor_msgs__msg__JointState joint_msg;
+    sensor_msgs__msg__JointState joint_msg[NR_OF_JOINTS];
     
     rclc_executor_t executor;
     rclc_support_t support;
@@ -140,10 +143,16 @@ class ConnectorMicroROS : public Connector {
       AGENT_DISCONNECTED =3
     } state=WAITING_AGENT;
 
+    struct micro_ros_agent_locator {
+      IPAddress address;
+      int port;
+    };
+
     joint_state_t joint_state_[NR_OF_JOINTS];
 
-    bool initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback);
+    bool initAgent(const connectorTimerCallbak_t ptimerCallback,connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback);
     bool pingAgent(int timeout_ms, int attempts);
+    bool isAvailable();
     bool listenAgent(long pWait_time_ms);
     void publishImu(IMUInterface::Imu_t pImu_msg);
     void publishOdom(Odometry::Odometry_data pOdom_msg);
@@ -166,21 +175,21 @@ class ConnectorMicroROS : public Connector {
     bool syncTime();
     struct timespec getTime();
     int64_t getMillis();
-#ifndef ENABLE_MICRO_ROS
+
   private:
-    connectorTwistCallbak_t twistCallback_;
-    rclc_subscription_callback_t jointCallback_;
-    connectorTimerCallbak_t timerCallback_;
-    connectorPidCallbak_t pidCallback_;
+    static void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
+    static void twistCallback(const void * pTwist_msg);
+    static void jointCallback(const void * pJointState_msg);
+
+    // connectorTwistCallbak_t twistCallback_;
+    // rclc_subscription_callback_t jointCallback_;
+    // DeviceWifi::DeviceWifi_t deviceWifi_;
     DeviceWifi::DeviceWifi_t deviceWifi_;
 
     bool isAvailable(int timeout_ms, int attempts);
     bool destroyEntities();
 
     // used for joint state
-    void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
-    void twistCallback(const geometry_msgs__msg__Twist* pTwist_msg);
-    void jointCallback(sensor_msgs__msg__JointState *pJointState_msg);
     bool isPublishJointState=false;
     bool isPublishReqState=false;
     bool isPublish=false;
@@ -188,8 +197,29 @@ class ConnectorMicroROS : public Connector {
     double JointStatePosition[NR_OF_JOINTS];
     double ReqStateVelocity[NR_OF_JOINTS];
     double ReqStatePosition[NR_OF_JOINTS];
-#endif
+
 
 };
+
+#ifdef ENABLE_MICRO_ROS
+#ifdef MICRO_ROS_TRANSPORT_ARDUINO_WIFI
+// remove wifi initialization code from wifi transport
+static inline void set_microros_net_transports(IPAddress agent_ip, uint16_t agent_port)
+{
+    static struct ConnectorMicroROS::micro_ros_agent_locator locator;
+    locator.address = agent_ip;
+    locator.port = agent_port;
+
+    rmw_uros_set_custom_transport(
+        false,
+        (void *) &locator,
+        platformio_transport_open,
+        platformio_transport_close,
+        platformio_transport_write,
+        platformio_transport_read
+    );
+}
+#endif
+#endif
 
 #endif // #define ROS_COMMUNICATION_H
