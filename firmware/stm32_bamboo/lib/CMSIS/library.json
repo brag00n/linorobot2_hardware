@@ -1,0 +1,12 @@
+{
+  "name": "CMSIS",
+  "version": "3.5.0",
+  "build": {
+    "srcFilter": [
+      "+<*>",
+      "-<startup>",
+      "-<startup/*>",
+      "-<startup_stm32f10x_hd.s>"
+    ]
+  }
+}
