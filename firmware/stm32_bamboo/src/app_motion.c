@@ -28,33 +28,19 @@ motor_data_t motor_data;
 uint8_t g_yaw_adjust = 0;
 car_type_t g_car_type = CAR_MECANUM;
 
+// Geometrie roue reglable a chaud (portee : tous les chassis). Defauts = fourwheel.
+// Ces variables priment sur les tables #define par-type dans les 3 getters ci-dessous.
+static float g_wheel_cpr     = WHEEL_GEOM_DEF_CPR;         // tics/tour encodeur
+static float g_wheel_circ_mm = WHEEL_GEOM_DEF_CIRC10 / 10.0f; // circonference roue (mm)
+static float g_wheel_apb     = WHEEL_GEOM_DEF_APB10 / 10.0f;  // demi-somme voie+empattement (mm)
+
 
 
 static float Motion_Get_Circle_Pulse(void)
 {
-    float temp = 0;
-    switch (g_car_type)
-    {
-    case CAR_MECANUM:
-        temp = ENCODER_CIRCLE_330;
-        break;
-    case CAR_MECANUM_MAX:
-        temp = ENCODER_CIRCLE_205;
-        break;
-    case CAR_FOURWHEEL:
-        temp = ENCODER_CIRCLE_330;
-        break;
-    case CAR_ACKERMAN:
-        temp = ENCODER_CIRCLE_550;
-        break;
-    case CAR_SUNRISE:
-        temp = ENCODER_CIRCLE_450;
-        break;
-    default:
-        temp = ENCODER_CIRCLE_330;
-        break;
-    }
-    return temp;
+    // Portee tous chassis : valeur runtime (flash/RAM), reglable via FUNC_SET_WHEEL_GEOM.
+    // Les tables ENCODER_CIRCLE_* par-type ne sont plus consultees a l'execution.
+    return g_wheel_cpr;
 }
 
 
@@ -301,27 +287,33 @@ void Motion_Get_Speed(car_data_t* car)
 }
 
 // 返回当前小车轮子轴间距和的一半
+// Portee tous chassis : valeur runtime (mm), reglable via FUNC_SET_WHEEL_GEOM.
 float Motion_Get_APB(void)
 {
-    if (g_car_type == CAR_MECANUM) return MECANUM_APB;
-    if (g_car_type == CAR_MECANUM_MAX) return MECANUM_MAX_APB;
-    if (g_car_type == CAR_MECANUM_MINI) return MECANUM_MINI_APB;
-    if (g_car_type == CAR_ACKERMAN) return AKM_WIDTH;
-    if (g_car_type == CAR_FOURWHEEL) return FOURWHEEL_APB;
-    if (g_car_type == CAR_SUNRISE) return MECANUM_SUNRISE_APB;
-    return MECANUM_APB;
+    return g_wheel_apb;
 }
 
 // 返回当前小车轮子转一圈的多少毫米
+// Portee tous chassis : valeur runtime (mm), reglable via FUNC_SET_WHEEL_GEOM.
 float Motion_Get_Circle_MM(void)
 {
-    if (g_car_type == CAR_MECANUM) return MECANUM_CIRCLE_MM;
-    if (g_car_type == CAR_MECANUM_MAX) return MECANUM_MAX_CIRCLE_MM;
-    if (g_car_type == CAR_MECANUM_MINI) return MECANUM_MINI_CIRCLE_MM;
-    if (g_car_type == CAR_ACKERMAN) return AKM_CIRCLE_MM;
-    if (g_car_type == CAR_FOURWHEEL) return FOURWHEEL_CIRCLE_MM;
-    if (g_car_type == CAR_SUNRISE) return MECANUM_CIRCLE_MM;
-    return MECANUM_CIRCLE_MM;
+    return g_wheel_circ_mm;
+}
+
+// Applique en RAM la geometrie roue (portee tous chassis).
+void Motion_Set_Wheel_Geom(float cpr, float circ_mm, float apb_mm)
+{
+    if (cpr > 0)     g_wheel_cpr     = cpr;
+    if (circ_mm > 0) g_wheel_circ_mm = circ_mm;
+    if (apb_mm > 0)  g_wheel_apb     = apb_mm;
+}
+
+// Lit la geometrie roue courante (RAM).
+void Motion_Get_Wheel_Geom(float* cpr, float* circ_mm, float* apb_mm)
+{
+    if (cpr)     *cpr     = g_wheel_cpr;
+    if (circ_mm) *circ_mm = g_wheel_circ_mm;
+    if (apb_mm)  *apb_mm  = g_wheel_apb;
 }
 
 // 设置当前控制的小车类型。
@@ -467,6 +459,36 @@ void Motion_Send_Car_Type(void)
 	}
 	data_buffer[LEN_BUF-1] = checknum;
 	USART1_Send_ArrayU8(data_buffer, sizeof(data_buffer));
+	#undef LEN_BUF
+}
+
+
+// Envoie la geometrie roue courante au maitre : cpr (u16), circ*10 (u16), apb*10 (u16), little-endian.
+void Motion_Send_Wheel_Geom(void)
+{
+	#define LEN_BUF        11
+	uint8_t data_buffer[LEN_BUF] = {0};
+	uint8_t i, checknum = 0;
+	uint16_t cpr    = (uint16_t)(g_wheel_cpr + 0.5f);
+	uint16_t circ10 = (uint16_t)(g_wheel_circ_mm * 10.0f + 0.5f);
+	uint16_t apb10  = (uint16_t)(g_wheel_apb * 10.0f + 0.5f);
+	data_buffer[0] = PTO_HEAD;
+	data_buffer[1] = PTO_DEVICE_ID-1;
+	data_buffer[2] = LEN_BUF-2; // 数量
+	data_buffer[3] = FUNC_SET_WHEEL_GEOM; // 功能位
+	data_buffer[4] = cpr & 0xff;
+	data_buffer[5] = (cpr >> 8) & 0xff;
+	data_buffer[6] = circ10 & 0xff;
+	data_buffer[7] = (circ10 >> 8) & 0xff;
+	data_buffer[8] = apb10 & 0xff;
+	data_buffer[9] = (apb10 >> 8) & 0xff;
+	for (i = 2; i < LEN_BUF-1; i++)
+	{
+		checknum += data_buffer[i];
+	}
+	data_buffer[LEN_BUF-1] = checknum;
+	USART1_Send_ArrayU8(data_buffer, sizeof(data_buffer));
+	#undef LEN_BUF
 }
 
 

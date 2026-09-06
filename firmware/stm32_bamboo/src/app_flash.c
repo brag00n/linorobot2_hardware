@@ -19,6 +19,7 @@ static void Flash_PID_Init(void);
 static void Flash_ARM_Mid_Offset_Init(void);
 static void Flash_CarType_Init(void);
 static void Flash_AKM_Angle_Init(void);
+static void Flash_WheelGeom_Init(void);
 
 
 static uint16_t Flash_Read_TestMode(void);
@@ -330,6 +331,46 @@ static void Flash_AKM_Angle_Init(void)
 /*阿克曼小车数据******************************************************************/
 
 
+/*轮子几何参数(cpr/circonference/APB)*******************************************/
+// Lit les 3 grandeurs stockees (cpr, circ*10, apb*10).
+void Flash_Read_Wheel_Geom(uint16_t* cpr, uint16_t* circ10, uint16_t* apb10)
+{
+    uint16_t buf[3] = {0xFFFF, 0xFFFF, 0xFFFF};
+    Flash_Read(F_WHEEL_GEOM_ADDR, buf, 3);
+    *cpr    = buf[0];
+    *circ10 = buf[1];
+    *apb10  = buf[2];
+    printf("FRead WheelGeom: cpr=%d, circ10=%d, apb10=%d\n", buf[0], buf[1], buf[2]);
+}
+
+// Ecrit les 3 grandeurs (cpr, circ*10, apb*10). Skip si identique (endurance flash).
+void Flash_Set_Wheel_Geom(uint16_t cpr, uint16_t circ10, uint16_t apb10)
+{
+    uint16_t old_cpr, old_circ10, old_apb10;
+    Flash_Read_Wheel_Geom(&old_cpr, &old_circ10, &old_apb10);
+    if (old_cpr == cpr && old_circ10 == circ10 && old_apb10 == apb10) return;
+    uint16_t buf[3] = {cpr, circ10, apb10};
+    Flash_Write(F_WHEEL_GEOM_ADDR, buf, 3);
+    DEBUG("FSet WheelGeom: cpr=%d, circ10=%d, apb10=%d\n", cpr, circ10, apb10);
+}
+
+// Initialisation : charge le flash (ou les defauts si non initialise) puis applique en RAM.
+static void Flash_WheelGeom_Init(void)
+{
+    uint16_t cpr, circ10, apb10;
+    Flash_Read_Wheel_Geom(&cpr, &circ10, &apb10);
+    if (cpr == 0xFFFF || cpr == 0 || circ10 == 0xFFFF || circ10 == 0 || apb10 == 0xFFFF || apb10 == 0)
+    {
+        cpr    = WHEEL_GEOM_DEF_CPR;
+        circ10 = WHEEL_GEOM_DEF_CIRC10;
+        apb10  = WHEEL_GEOM_DEF_APB10;
+        Flash_Set_Wheel_Geom(cpr, circ10, apb10);
+    }
+    Motion_Set_Wheel_Geom((float)cpr, circ10 / 10.0f, apb10 / 10.0f);
+}
+/*轮子几何参数(cpr/circonference/APB)*******************************************/
+
+
 
 /*Flash初始化设置**************************************************************/
 // 重置所有数值。
@@ -343,6 +384,7 @@ void Flash_Reset_All_Value(void)
     Flash_Reset_ARM_Median_Value();
     Flash_Set_CarType(CAR_MECANUM);
     Flash_Set_AKM_Angle(AKM_ANGLE_INIT);
+    Flash_Set_Wheel_Geom(WHEEL_GEOM_DEF_CPR, WHEEL_GEOM_DEF_CIRC10, WHEEL_GEOM_DEF_APB10);
 
 
     // 保存FLASH 数值状态为OK
@@ -374,6 +416,7 @@ void Flash_Init(void)
         Flash_Reset_All_Value();
     }
     Flash_AKM_Angle_Init();
+    Flash_WheelGeom_Init();
     Flash_CarType_Init();
     Flash_Auto_Report_Init();
     Flash_PID_Init();
@@ -403,6 +446,9 @@ void Flash_Read_ARM_Median_Value(uint8_t id, uint16_t* value){}
 
 
 void Flash_Set_AKM_Angle(uint16_t angle){}
+
+void Flash_Set_Wheel_Geom(uint16_t cpr, uint16_t circ10, uint16_t apb10){}
+void Flash_Read_Wheel_Geom(uint16_t* cpr, uint16_t* circ10, uint16_t* apb10){}
 
 void Flash_TestMode_Init(void){}
 void Flash_Set_TestMode(uint8_t mode){}

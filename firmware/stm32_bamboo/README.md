@@ -46,23 +46,55 @@ L'ordonnancement est assuré par **FreeRTOS** (kernel V10.4.3). Tâches principa
 | `0x05` | Ackermann (direction) | R2 |
 | `0x06` | Sunrise | — |
 
-### 1.3 Place dans une pile ROS / ROS2
+### 1.3 Architecture Agent ROS 2 ciblée (« Approche A »)
 
-Ce dépôt contient **uniquement le firmware MCU**. Dans un robot complet :
+Ce dépôt contient **uniquement le firmware MCU**. Il s'intègre à ROS 2 via une
+**Approche A** : le protocole série binaire Yahboom est conservé côté STM32, et
+un **nœud-pont (bridge) ROS 2** léger tourne sur le SBC pour traduire ce
+protocole ↔ topics ROS 2. Point clé : **la cinématique et l'odométrie sont
+calculées SUR le STM32**, pas sur l'hôte.
 
 ```
-   +------------------------+        USB (CH340, 115200, binaire)        +------------------------+
-   |  Hôte SBC (RPi5/Jetson)| <----------------------------------------> |  Carte STM32 (ce dépôt)|
-   |  ROS 2 (nœud driver)   |   consignes (vitesse, servo, RGB…)         |  FreeRTOS + PID + IMU  |
-   |  carto, nav, capteurs  |   télémétrie (odométrie, IMU, batterie)    |  4 moteurs + encodeurs |
-   +------------------------+                                            +------------------------+
+  SBC (RPi5 / Jetson) — graphe ROS 2                    Carte STM32 (ce dépôt)
+  ┌───────────────────────────────────┐                ┌───────────────────────────┐
+  │  Nav2 / SLAM / téléop              │                │  FreeRTOS                  │
+  │        │  /cmd_vel      ▲ /odom    │                │   • cinématique châssis    │
+  │        ▼                │ /imu     │   USB CH340    │     cmd_vel(Vx,Vy,Vz) ↔    │
+  │  robot_localization EKF │ /battery │   115200, 8N1  │     4 vitesses roues       │
+  │        │                │          │   protocole    │   • PID vitesse × moteur   │
+  │        ▼                │          │   binaire      │   • intégration odométrie  │
+  │  ┌──────────────────────────────┐ │ <────────────> │   • fusion attitude IMU    │
+  │  │  Nœud-pont ROS 2 (bridge)    │ │  consignes ───▶ │   • géométrie roue runtime │
+  │  │  binaire  ⇄  topics ROS 2    │ │  ◀─── télémétrie│     (cpr/circ/APB, §6.5)   │
+  │  └──────────────────────────────┘ │                │  4 moteurs + encodeurs+IMU │
+  └───────────────────────────────────┘                └───────────────────────────┘
 ```
 
-L'hôte exécute les nœuds **ROS 2** (le pilote série Yahboom / `Rosmaster_Lib`,
-puis navigation, SLAM, etc.). Le STM32 ne « fait pas de ROS » lui-même : il
-publie une télémétrie binaire que le nœud driver convertit en topics ROS
-(`/odom`, `/imu`, `/cmd_vel`…). La carte alimente aussi le SBC (protocole
-d'alimentation Raspberry Pi 5 pris en charge).
+**Répartition des rôles**
+
+| Côté STM32 (temps réel, ce firmware) | Côté SBC (graphe ROS 2) |
+|---|---|
+| PID vitesse des 4 moteurs (boucle déterministe) | Nœud-pont : `/cmd_vel` → trames binaires, télémétrie → topics |
+| Cinématique `cmd_vel (Vx,Vy,Vz)` ↔ vitesses roues | Publication `/odom`, `/imu/data`, état batterie |
+| Intégration d'odométrie depuis les encodeurs | Fusion `robot_localization` (EKF : odom roues + IMU) |
+| Fusion d'attitude IMU (roll/pitch/yaw) | Cartographie (SLAM), navigation (Nav2), téléop |
+| Géométrie roue + gains PID **réglables à chaud** (§6.5) | Repères TF, coûts, planification |
+
+**Pourquoi la cinématique sur le MCU** : boucle temps réel garantie par FreeRTOS,
+SBC déchargé, et fidélité au design natif Yahboom → le pont reste **mince** (pas
+de calcul de modèle, juste de la traduction de trames). En contrepartie,
+**l'odométrie n'est correcte que si la géométrie du robot est exacte côté
+firmware** (tics/tour, circonférence de roue, empattement) : d'où le paramétrage
+à chaud décrit au **§6.5**, qui évite un reflash à chaque ajustement mécanique.
+
+La carte alimente aussi le SBC (protocole d'alimentation Raspberry Pi 5 pris en charge).
+
+> **Évolution micro-ROS (préparée).** Une variante où le STM32 embarque un client
+> **micro-ROS** (DDS-XRCE) dialoguant avec un **micro-ROS Agent** sur le SBC — au
+> lieu du protocole binaire + pont — est en cours de préparation. Elle
+> supprimerait le nœud-pont (le MCU publierait/souscrirait directement des topics
+> ROS 2), la répartition des rôles temps-réel ci-dessus restant identique. Le
+> paramétrage runtime du §6.5 reste pertinent dans les deux approches.
 
 ---
 
@@ -435,8 +467,15 @@ Trames auto-publiées :
 | `0x0D` | REPORT_ENCODER  | M1..M4 (int32, comptage) |
 
 Codes de commande (hôte → carte) : moteurs `0x10`, run `0x11`, mouvement `0x12`,
-PID `0x13/0x14`, type châssis `0x15`, servos `0x03/0x04/0x20…`, RGB `0x05/0x06`,
-buzzer `0x02`, version `0x51`… (liste complète : `src/protocol.h`).
+PID `0x13/0x14`, type châssis `0x15`, **géométrie roue `0x16`** (voir §6.5),
+servos `0x03/0x04/0x20…`, RGB `0x05/0x06`, buzzer `0x02`, version `0x51`…
+Lecture d'un paramètre : `REQUEST_DATA (0x50)` + code visé (ex. `0x15`, `0x16`).
+Liste complète : `src/protocol.h`.
+
+> **Cadence d'auto-report** : les 4 trames ci-dessus sont émises en round-robin,
+> chacune ~25 Hz (`AUTO_SEND_TIMEOUT`, `src/config.h`). Cette fréquence est
+> aujourd'hui une constante de compilation ; seul l'ON/OFF global est réglable à
+> chaud (`FUNC_AUTO_REPORT 0x01`).
 
 ### 6.3 Accès live via MCP (`tools/ros_mcp_server.py`)
 
@@ -457,6 +496,11 @@ Outils exposés :
 | `metrics` | vitesse & batterie, attitude RPY, gyro/accel, encodeurs, vitesse moteurs |
 | `encoders` | comptage cumulatif + vitesse instantanée (tics/s, tr/min) |
 | `car_type` | interroge la carte (0x50→0x15) → type + cpr, appliqué auto |
+| `set_car_type` | écrit le type de châssis (0x15) ; `save=true` (défaut) persiste en flash |
+| `get_wheel_geom` | lit la géométrie roue (0x50→0x16) : cpr, circonférence, Ø, APB (voir §6.5) |
+| `set_wheel_geom` | écrit cpr / circ_mm / apb_mm (0x16, args absents = valeur courante) ; `save` défaut **true** |
+| `get_pid` | lit les PID moteur (partagé) et yaw (0x50→0x13/0x14) |
+| `set_motor_pid` / `set_yaw_pid` | règle les gains PID ; `save` défaut **false** = RAM (essais), `true` = flash (voir §6.5) |
 | `calibrate_baseline` / `calibrate_read` | mesure des tics/tour en tournant une roue à la main, **sans synchro temporelle** |
 | `flash_firmware` | mise à jour de l'application par **IAP** (UART) : libère le port, lance `iap_flash.py`, rouvre (voir §5.A) |
 | `enter_bootloader` | envoie `0xA3` et **libère** le port (pour un `pio run -t upload` manuel) |
@@ -481,6 +525,62 @@ Sur le SBC (Raspberry Pi/Jetson) relié en USB à la carte :
 
 > Le firmware étant agnostique de ROS, on peut aussi le piloter depuis n'importe
 > quel script série envoyant les trames du §6.2 (Python `pyserial`, etc.).
+
+### 6.5 Configuration à chaud : géométrie roue & PID
+
+La cinématique et l'odométrie étant calculées sur le STM32 (§1.3), leur exactitude
+dépend de **paramètres physiques** qui, à l'origine, étaient figés à la
+compilation. Deux familles sont désormais **réglables à chaud et persistées en
+flash**, sans reflash :
+
+- **Géométrie roue** (portée : tous châssis) — `FUNC_SET_WHEEL_GEOM = 0x16` :
+  - `cpr` : tics d'encodeur par tour de roue (défaut 1320 = moteur 330 RPM) ;
+  - `circ_mm` : circonférence de roue en mm (défaut 215.2, soit Ø ≈ 68.5 mm) ;
+  - `apb_mm` : demi-somme voie + empattement en mm (défaut 164.6).
+- **Gains PID** — `FUNC_SET_MOTOR_PID = 0x13` (PID **unique partagé** par les 4
+  moteurs) et `FUNC_SET_YAW_PID = 0x14` (correction de cap).
+
+**Mécanisme RAM / flash (octet de garde `verify`).** Chaque commande de réglage
+applique **toujours** la valeur en RAM (effet immédiat) et ne l'**écrit en flash
+que si l'octet `verify == 0x5F`** (`SAVE_VERIFY`). Cela permet de multiplier les
+essais sans user la flash (endurance F103 ~10 000 cycles) puis de ne graver que la
+valeur validée. La relecture se fait via `REQUEST_DATA (0x50)` + le code visé, qui
+renvoie la valeur **réellement stockée**.
+
+Trames `0x16` (little-endian ; `circ`/`apb` codés en ×10 = 0,1 mm) :
+
+```
+SET    hôte→carte : [FF][FC][09][16][cpr_lo cpr_hi][circ10_lo circ10_hi][apb10_lo apb10_hi][verify][CHK]
+READ   hôte→carte : [FF][FC][05][50][16][00][CHK]                       (REQUEST_DATA)
+REPORT carte→hôte : [FF][FB][08][16][cpr_lo cpr_hi][circ10_lo circ10_hi][apb10_lo apb10_hi][CHK]
+```
+
+Stockage flash (secteur données 120, offset `0x80`) : `cpr` en entier, `circ` et
+`apb` en dixièmes de mm. Un flash vierge est initialisé aux défauts *fourwheel*
+(1320 / 215.2 / 164.6) → comportement identique à l'ancien code figé. Le firmware
+rejette une trame dont un champ vaut 0 (garde anti-corruption).
+
+**Via MCP** (le plus simple, voir tableau §6.3) :
+
+```
+get_wheel_geom                                  # cpr / circ / Ø / APB courants
+set_wheel_geom  circ_mm=215.2  save=true        # écrit + persiste ; args absents = inchangés
+get_pid                                         # PID moteur (partagé) + yaw
+set_motor_pid   kp=0.9 ki=0.06 kd=0.5           # save=false (défaut) → RAM : essai
+set_motor_pid   kp=0.9 ki=0.06 kd=0.5 save=true # → flash : gain validé
+```
+
+> ⚠️ **`save` diffère par famille** : `set_wheel_geom`/`set_car_type` persistent
+> par **défaut** (`save=true`, on règle une fois pour toutes) ; `set_motor_pid`/
+> `set_yaw_pid` restent en **RAM par défaut** (`save=false`, on itère). Un réglage
+> RAM ne survit pas au reset — c'est voulu : seul un `save=true` explicite grave le
+> gain retenu. Vérifier la persistance par **coupure d'alim / RESET** puis relecture
+> (pas par reflash, qui ne touche pas le secteur de données).
+
+**Détails d'implémentation** : `src/app_motion.c` (getters runtime + `Motion_Set/Get_Wheel_Geom`),
+`src/app_flash.c` (`Flash_Set/Read_Wheel_Geom`, init), `src/protocol.c` (parsing 0x16
++ read-back), `src/app_pid.c` (PID). Décodeur PC : `tools/ros_monitor.py`
+(`decode_wheel_geom`, `decode_pid`).
 
 ---
 

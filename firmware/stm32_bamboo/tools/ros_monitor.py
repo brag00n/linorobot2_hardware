@@ -71,6 +71,10 @@ PTO_ID_TX = 0xFC - 1          # 0xFB : ID emis par la carte vers l'hote
 PTO_ID_RX = 0xFC              # 0xFC : ID des trames hote -> carte
 FUNC_REQUEST_DATA = 0x50      # commande "demande de donnee"
 FUNC_CAR_TYPE = 0x15          # type de chassis (requete + reponse)
+FUNC_SET_WHEEL_GEOM = 0x16    # geometrie roue : cpr + circonference + APB (set + read)
+FUNC_SET_MOTOR_PID = 0x13     # PID moteur (set + read)
+FUNC_SET_YAW_PID = 0x14       # PID yaw   (set + read)
+SAVE_VERIFY = 0x5F            # octet de garde : ecrire en flash si egal, sinon RAM seule
 
 # Type de chassis -> (tics par tour de roue, libelle). Table figee du firmware
 # (src/app_motion.c: Motion_Get_Circle_Pulse + src/app_motion.h).
@@ -89,7 +93,7 @@ FUNC_NAMES = {
     0x0A: "REPORT_SPEED", 0x0B: "REPORT_MPU_RAW", 0x0C: "REPORT_IMU_ATT",
     0x0D: "REPORT_ENCODER", 0x0E: "REPORT_ICM_RAW", 0x0F: "RESET_STATE",
     0x10: "MOTOR", 0x11: "CAR_RUN", 0x12: "MOTION", 0x13: "SET_MOTOR_PID",
-    0x14: "SET_YAW_PID", 0x15: "CAR_TYPE",
+    0x14: "SET_YAW_PID", 0x15: "CAR_TYPE", 0x16: "SET_WHEEL_GEOM",
     0x51: "VERSION", 0x52: "NOW_YAW",
 }
 
@@ -149,6 +153,31 @@ def decode_imu_att(d):
 def decode_encoder(d):
     return {f"M{i + 1}": float(s32(d[4 * i], d[4 * i + 1],
                                    d[4 * i + 2], d[4 * i + 3])) for i in range(4)}
+
+
+def decode_wheel_geom(d):
+    """Report FUNC_SET_WHEEL_GEOM : cpr (u16le), circ*10 (u16le), apb*10 (u16le)."""
+    def u16(lo, hi):
+        return lo | (hi << 8)
+    circ_mm = u16(d[2], d[3]) / 10.0
+    return {
+        "cpr (tics/tour)": float(u16(d[0], d[1])),
+        "circ (mm)":       circ_mm,
+        "diam (mm)":       circ_mm / math.pi,
+        "APB (mm)":        u16(d[4], d[5]) / 10.0,
+    }
+
+
+def decode_pid(d):
+    """Report FUNC_SET_MOTOR_PID/SET_YAW_PID : index (u8), kp/ki/kd (u16le / 1000)."""
+    def u16(lo, hi):
+        return lo | (hi << 8)
+    return {
+        "index":  float(d[0]),
+        "kp":     u16(d[1], d[2]) / 1000.0,
+        "ki":     u16(d[3], d[4]) / 1000.0,
+        "kd":     u16(d[5], d[6]) / 1000.0,
+    }
 
 
 # ---------------------------------------------------------------------------

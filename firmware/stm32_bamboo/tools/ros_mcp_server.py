@@ -48,8 +48,10 @@ except ImportError:
 
 # Reutilise les decodeurs de l'outil (meme dossier tools/, ajoute a sys.path[0]).
 from ros_monitor import (CAR_TYPE_CPR, FUNC_CAR_TYPE, FUNC_REQUEST_DATA,
+                         FUNC_SET_WHEEL_GEOM, FUNC_SET_MOTOR_PID, FUNC_SET_YAW_PID,
                          FrameParser, build_frame, decode_encoder,
-                         decode_icm_raw, decode_imu_att, decode_speed)
+                         decode_icm_raw, decode_imu_att, decode_speed,
+                         decode_wheel_geom, decode_pid)
 
 FUNC_MOTOR = 0x10                     # pilotage PWM direct : [m1 m2 m3 m4] int8 (%)
 FUNC_PWM_SERVO = 0x03                 # servo PWM : [id_1based(1..4) angle(0..180)]
@@ -83,6 +85,10 @@ class Board:
         self.bad = 0
         self.car_type = None
         self.car_type_t = 0.0
+        self.wheel_geom = None                        # dict decode_wheel_geom
+        self.wheel_geom_t = 0.0
+        self.pid = {}                                 # index (1..5) -> (dict, t)
+        self.pid_t = 0.0                              # horodatage du dernier report PID
         self.enc_hist = deque(maxlen=600)             # (t, [M1..M4])
         self.baseline = None                          # [M1..M4] de reference
         self.start_t = time.time()
@@ -150,6 +156,13 @@ class Board:
                     elif func == FUNC_CAR_TYPE and len(data) >= 1:
                         self.car_type = data[0]
                         self.car_type_t = t
+                    elif func == FUNC_SET_WHEEL_GEOM and len(data) >= 6:
+                        self.wheel_geom = decode_wheel_geom(data)
+                        self.wheel_geom_t = t
+                    elif func in (FUNC_SET_MOTOR_PID, FUNC_SET_YAW_PID) and len(data) >= 7:
+                        d = decode_pid(data)
+                        self.pid[int(d["index"])] = (d, t)
+                        self.pid_t = t
 
     # --- calculs derives ----------------------------------------------------
     def hz(self, func, window=5.0):
@@ -187,6 +200,48 @@ class Board:
             with self.lock:
                 if self.car_type is not None and self.car_type_t > base_t:
                     return self.car_type
+            time.sleep(0.05)
+        return None
+
+    def read_wheel_geom(self, timeout=1.5):
+        """Envoie REQUEST_DATA(0x16) et attend le report geometrie roue."""
+        if self.ser is None:
+            return None
+        with self.lock:
+            base_t = self.wheel_geom_t
+        try:
+            self.ser.write(build_frame(FUNC_REQUEST_DATA, bytes([FUNC_SET_WHEEL_GEOM, 0x00])))
+        except Exception as e:
+            self.last_err = str(e)
+            return None
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self.lock:
+                if self.wheel_geom is not None and self.wheel_geom_t > base_t:
+                    return dict(self.wheel_geom)
+            time.sleep(0.05)
+        return None
+
+    def read_pid(self, index, timeout=1.5):
+        """Envoie REQUEST_DATA(0x13/0x14, index) et attend le report PID.
+        index 1..4 = moteurs (PID unique partage), 5 = yaw."""
+        if self.ser is None:
+            return None
+        func = FUNC_SET_YAW_PID if index == 5 else FUNC_SET_MOTOR_PID
+        with self.lock:
+            prev = self.pid.get(index)
+            base_t = prev[1] if prev else 0.0
+        try:
+            self.ser.write(build_frame(FUNC_REQUEST_DATA, bytes([func, index & 0xFF])))
+        except Exception as e:
+            self.last_err = str(e)
+            return None
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self.lock:
+                cur = self.pid.get(index)
+                if cur and cur[1] > base_t:
+                    return dict(cur[0])
             time.sleep(0.05)
         return None
 
@@ -281,6 +336,214 @@ def t_car_type(board, args):
     return (f"car_type=0x{ct:02X} ({label})"
             + (f"  =>  cpr={cpr:g} tics/tour (applique)" if cpr else
                "  (non repertorie ; utilisez la calibration)"))
+
+
+CAR_TYPE_LABELS = {
+    0x01: "CAR_MECANUM", 0x02: "CAR_MECANUM_MAX", 0x03: "CAR_MECANUM_MINI",
+    0x04: "CAR_FOURWHEEL", 0x05: "CAR_ACKERMAN", 0x06: "CAR_SUNRISE",
+}
+
+
+def t_set_car_type(board, args):
+    """Ecrit le type de chassis dans la carte (FUNC_CAR_TYPE 0x15 = [type, verify]).
+    Avec save=true (defaut), verify=SAVE_VERIFY (0x5F) => persiste en flash ; sinon
+    RAM seulement (perdu au reset). Relit ensuite le type pour confirmer.
+    Types : 0x01 MECANUM, 0x02 MECANUM_MAX, 0x03 MECANUM_MINI, 0x04 FOURWHEEL,
+    0x05 ACKERMAN, 0x06 SUNRISE.
+    """
+    if board.ser is None:
+        return "Port non connecte : impossible d'ecrire le type de chassis."
+    try:
+        ct = int(args.get("car_type"))
+    except (TypeError, ValueError):
+        return "car_type manquant ou invalide (ex : 4 pour CAR_FOURWHEEL)."
+    if ct < 0x01 or ct >= 0x07:                        # CAR_TYPE_MAX = 0x07
+        return f"car_type=0x{ct:02X} hors plage (0x01..0x06)."
+    save = args.get("save")
+    save = True if save is None else bool(save)
+    verify = SAVE_VERIFY if save else 0x00
+
+    with board.lock:
+        base_t = board.car_type_t
+    try:
+        board.ser.write(build_frame(FUNC_CAR_TYPE, bytes([ct, verify])))
+    except Exception as e:
+        board.last_err = str(e)
+        return f"Ecriture car_type KO : {e}"
+
+    time.sleep(0.2)
+    got = board.detect_car_type()                      # relit via requete 0x50->0x15
+    label = CAR_TYPE_LABELS.get(ct, "type inconnu")
+    dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
+    head = f"car_type ecrit -> 0x{ct:02X} ({label}) vers {dest}."
+    if got is None:
+        return head + "\n  Pas de relecture (carte muette) : verifie avec l'outil car_type."
+    ok = "OK" if got == ct else "MISMATCH"
+    cpr, glabel = CAR_TYPE_CPR.get(got, (None, "type inconnu"))
+    if cpr:
+        board.cpr = cpr
+    return (head + f"\n  relecture : 0x{got:02X} ({glabel}) -> {ok}"
+            + (f"  cpr={cpr:g} tics/tour (applique)" if cpr else ""))
+
+
+def _fmt_wheel_geom(g):
+    return (f"cpr={g['cpr (tics/tour)']:.0f} tics/tour   "
+            f"circ={g['circ (mm)']:.1f} mm (diam={g['diam (mm)']:.1f} mm)   "
+            f"APB={g['APB (mm)']:.1f} mm")
+
+
+def t_get_wheel_geom(board, args):
+    """Lit la geometrie roue courante (REQUEST_DATA 0x16) : cpr, circonference,
+    diametre (=circ/pi) et APB (demi-somme voie+empattement)."""
+    if board.ser is None:
+        return "Port non connecte : impossible de lire la geometrie roue."
+    g = board.read_wheel_geom()
+    if g is None:
+        return ("Pas de reponse a REQUEST_DATA(0x16). Firmware a jour "
+                "(FUNC_SET_WHEEL_GEOM) ? Carte connectee ?")
+    return "Geometrie roue : " + _fmt_wheel_geom(g)
+
+
+def t_set_wheel_geom(board, args):
+    """Regle la geometrie roue (FUNC_SET_WHEEL_GEOM 0x16), portee tous chassis.
+    Args cpr (tics/tour), circ_mm, apb_mm : chacun optionnel (les absents gardent
+    la valeur courante lue). save=true (defaut) => flash (verify 0x5F) ; false => RAM.
+    Stockage : cpr entier, circ_mm et apb_mm en 0.1 mm. Relit pour confirmer."""
+    if board.ser is None:
+        return "Port non connecte : impossible d'ecrire la geometrie roue."
+    cur = board.read_wheel_geom()                      # peut etre None
+    cur_cpr = cur["cpr (tics/tour)"] if cur else None
+    cur_circ = cur["circ (mm)"] if cur else None
+    cur_apb = cur["APB (mm)"] if cur else None
+
+    def pick(key, cur_val):
+        v = args.get(key)
+        if v is None:
+            return cur_val
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return "ERR"
+
+    cpr_f, circ_f, apb_f = pick("cpr", cur_cpr), pick("circ_mm", cur_circ), pick("apb_mm", cur_apb)
+    if "ERR" in (cpr_f, circ_f, apb_f):
+        return "Argument invalide (cpr / circ_mm / apb_mm doivent etre numeriques)."
+    if cpr_f is None or circ_f is None or apb_f is None:
+        return ("Valeur manquante : la carte n'a pas repondu a la relecture, "
+                "fournissez explicitement cpr, circ_mm ET apb_mm.")
+
+    cpr = int(round(cpr_f))
+    circ10 = int(round(circ_f * 10.0))
+    apb10 = int(round(apb_f * 10.0))
+    if not (0 < cpr <= 0xFFFF and 0 < circ10 <= 0xFFFF and 0 < apb10 <= 0xFFFF):
+        return (f"Valeurs hors plage : cpr={cpr}, circ10={circ10}, apb10={apb10} "
+                "(chaque champ doit tenir dans 1..65535 ; circ/APB <= 6553.5 mm).")
+
+    save = args.get("save")
+    save = True if save is None else bool(save)
+    verify = SAVE_VERIFY if save else 0x00
+    payload = bytes([cpr & 0xFF, (cpr >> 8) & 0xFF,
+                     circ10 & 0xFF, (circ10 >> 8) & 0xFF,
+                     apb10 & 0xFF, (apb10 >> 8) & 0xFF, verify])
+    try:
+        board.ser.write(build_frame(FUNC_SET_WHEEL_GEOM, payload))
+    except Exception as e:
+        board.last_err = str(e)
+        return f"Ecriture geometrie roue KO : {e}"
+
+    time.sleep(0.2)
+    got = board.read_wheel_geom()
+    dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
+    head = (f"Geometrie roue ecrite -> cpr={cpr}, circ={circ10 / 10.0:.1f} mm, "
+            f"APB={apb10 / 10.0:.1f} mm vers {dest}.")
+    if got is None:
+        return head + "\n  Pas de relecture (carte muette) : verifie avec get_wheel_geom."
+    ok = ("OK" if abs(got["cpr (tics/tour)"] - cpr) < 0.5
+          and abs(got["circ (mm)"] - circ10 / 10.0) < 0.05
+          and abs(got["APB (mm)"] - apb10 / 10.0) < 0.05 else "MISMATCH")
+    return head + f"\n  relecture : {_fmt_wheel_geom(got)} -> {ok}"
+
+
+def _pid_payload(kp, ki, kd, verify):
+    """[kp*1000][ki*1000][kd*1000] int16 little-endian + octet verify."""
+    def i16(x):
+        v = int(round(x * 1000.0)) & 0xFFFF
+        return bytes([v & 0xFF, (v >> 8) & 0xFF])
+    return i16(kp) + i16(ki) + i16(kd) + bytes([verify])
+
+
+def _parse_pid_args(args):
+    try:
+        return (float(args.get("kp")), float(args.get("ki")), float(args.get("kd")), None)
+    except (TypeError, ValueError):
+        return (None, None, None, "kp, ki et kd sont requis et numeriques.")
+
+
+def t_set_motor_pid(board, args):
+    """Regle le PID moteur (FUNC_SET_MOTOR_PID 0x13), PID UNIQUE partage par les 4
+    moteurs. save=false (DEFAUT) => RAM seulement (essais de tuning) ; save=true =>
+    flash. Seules les valeurs validees doivent etre gravees. Relit pour confirmer."""
+    if board.ser is None:
+        return "Port non connecte : impossible d'ecrire le PID moteur."
+    kp, ki, kd, err = _parse_pid_args(args)
+    if err:
+        return err
+    save = bool(args.get("save"))                      # defaut False : RAM
+    verify = SAVE_VERIFY if save else 0x00
+    try:
+        board.ser.write(build_frame(FUNC_SET_MOTOR_PID, _pid_payload(kp, ki, kd, verify)))
+    except Exception as e:
+        board.last_err = str(e)
+        return f"Ecriture PID moteur KO : {e}"
+    time.sleep(0.2)
+    got = board.read_pid(1)
+    dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
+    head = f"PID moteur ecrit -> kp={kp:.3f} ki={ki:.3f} kd={kd:.3f} vers {dest}."
+    if got is None:
+        return head + "\n  Pas de relecture : verifie avec get_pid."
+    return head + f"\n  relecture (partage) : kp={got['kp']:.3f} ki={got['ki']:.3f} kd={got['kd']:.3f}"
+
+
+def t_set_yaw_pid(board, args):
+    """Regle le PID de cap/yaw (FUNC_SET_YAW_PID 0x14). save=false (DEFAUT) => RAM ;
+    save=true => flash. Relit (index 5) pour confirmer."""
+    if board.ser is None:
+        return "Port non connecte : impossible d'ecrire le PID yaw."
+    kp, ki, kd, err = _parse_pid_args(args)
+    if err:
+        return err
+    save = bool(args.get("save"))                      # defaut False : RAM
+    verify = SAVE_VERIFY if save else 0x00
+    try:
+        board.ser.write(build_frame(FUNC_SET_YAW_PID, _pid_payload(kp, ki, kd, verify)))
+    except Exception as e:
+        board.last_err = str(e)
+        return f"Ecriture PID yaw KO : {e}"
+    time.sleep(0.2)
+    got = board.read_pid(5)
+    dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
+    head = f"PID yaw ecrit -> kp={kp:.3f} ki={ki:.3f} kd={kd:.3f} vers {dest}."
+    if got is None:
+        return head + "\n  Pas de relecture : verifie avec get_pid."
+    return head + f"\n  relecture : kp={got['kp']:.3f} ki={got['ki']:.3f} kd={got['kd']:.3f}"
+
+
+def t_get_pid(board, args):
+    """Lit les PID courants : moteur (partage, index 1) et yaw (index 5)."""
+    if board.ser is None:
+        return "Port non connecte : impossible de lire les PID."
+    m = board.read_pid(1)
+    y = board.read_pid(5)
+    lines = []
+    if m:
+        lines.append(f"PID moteur (partage) : kp={m['kp']:.3f} ki={m['ki']:.3f} kd={m['kd']:.3f}")
+    else:
+        lines.append("PID moteur : pas de reponse.")
+    if y:
+        lines.append(f"PID yaw              : kp={y['kp']:.3f} ki={y['ki']:.3f} kd={y['kd']:.3f}")
+    else:
+        lines.append("PID yaw : pas de reponse.")
+    return "\n".join(lines)
 
 
 def t_calibrate_baseline(board, args):
@@ -680,6 +943,65 @@ TOOLS = [
                     "FUNC_REQUEST_DATA 0x50 -> 0x15) et en deduit les tics/tour "
                     "(cpr), applique automatiquement.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_car_type",
+     "description": "Ecrit le type de chassis dans la carte (FUNC_CAR_TYPE 0x15). "
+                    "save=true (defaut) persiste en flash (verify 0x5F) ; save=false "
+                    "= RAM seulement. Types : 1 MECANUM, 2 MECANUM_MAX, 3 MECANUM_MINI, "
+                    "4 FOURWHEEL, 5 ACKERMAN, 6 SUNRISE. Relit pour confirmer.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "car_type": {"type": "integer",
+                                      "description": "type de chassis 1..6 (4 = CAR_FOURWHEEL)"},
+                         "save": {"type": "boolean",
+                                  "description": "true (defaut) = persiste en flash ; false = RAM"}},
+                     "required": ["car_type"]}},
+    {"name": "get_wheel_geom",
+     "description": "Lit la geometrie roue runtime (REQUEST_DATA 0x16) : cpr "
+                    "(tics/tour), circonference (mm), diametre (=circ/pi) et APB "
+                    "(demi-somme voie+empattement, mm).",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_wheel_geom",
+     "description": "Regle la geometrie roue (FUNC_SET_WHEEL_GEOM 0x16), portee tous "
+                    "chassis. cpr, circ_mm, apb_mm chacun optionnel (absent = garde "
+                    "la valeur courante). save=true (defaut) persiste en flash (verify "
+                    "0x5F) ; save=false = RAM. Relit pour confirmer.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "cpr": {"type": "number",
+                                 "description": "tics encodeur par tour de roue (entier)"},
+                         "circ_mm": {"type": "number",
+                                     "description": "circonference de roue en mm (<=6553.5)"},
+                         "apb_mm": {"type": "number",
+                                    "description": "demi-somme voie+empattement en mm (<=6553.5)"},
+                         "save": {"type": "boolean",
+                                  "description": "true (defaut) = flash ; false = RAM"}}}},
+    {"name": "set_motor_pid",
+     "description": "Regle le PID moteur (FUNC_SET_MOTOR_PID 0x13), PID UNIQUE partage "
+                    "par les 4 moteurs. save=false (DEFAUT) = RAM (essais de tuning) ; "
+                    "save=true = flash (valeur validee). Relit pour confirmer.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "kp": {"type": "number", "description": "gain proportionnel"},
+                         "ki": {"type": "number", "description": "gain integral"},
+                         "kd": {"type": "number", "description": "gain derive"},
+                         "save": {"type": "boolean",
+                                  "description": "false (defaut) = RAM ; true = flash"}},
+                     "required": ["kp", "ki", "kd"]}},
+    {"name": "set_yaw_pid",
+     "description": "Regle le PID de cap/yaw (FUNC_SET_YAW_PID 0x14). save=false "
+                    "(DEFAUT) = RAM ; save=true = flash. Relit pour confirmer.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "kp": {"type": "number", "description": "gain proportionnel"},
+                         "ki": {"type": "number", "description": "gain integral"},
+                         "kd": {"type": "number", "description": "gain derive"},
+                         "save": {"type": "boolean",
+                                  "description": "false (defaut) = RAM ; true = flash"}},
+                     "required": ["kp", "ki", "kd"]}},
+    {"name": "get_pid",
+     "description": "Lit les PID courants : moteur (partage, index 1) et yaw "
+                    "(index 5) via REQUEST_DATA.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "calibrate_baseline",
      "description": "Fixe le comptage encodeur courant comme zero de reference, "
                     "avant de tourner une roue a la main.",
@@ -702,6 +1024,12 @@ HANDLERS = {
     "metrics": t_metrics,
     "encoders": t_encoders,
     "car_type": t_car_type,
+    "set_car_type": t_set_car_type,
+    "get_wheel_geom": t_get_wheel_geom,
+    "set_wheel_geom": t_set_wheel_geom,
+    "set_motor_pid": t_set_motor_pid,
+    "set_yaw_pid": t_set_yaw_pid,
+    "get_pid": t_get_pid,
     "calibrate_baseline": t_calibrate_baseline,
     "calibrate_read": t_calibrate_read,
 }

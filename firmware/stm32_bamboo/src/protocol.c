@@ -176,6 +176,13 @@ void Send_Request_Data(void)
 		break;
 	}
 
+	case FUNC_SET_WHEEL_GEOM:
+	{
+		Motion_Send_Wheel_Geom();
+		g_Request_Flag = 0;
+		break;
+	}
+
 	/* 其他值，清除状态 */
 	default:
 		g_Request_Flag = 0;
@@ -317,6 +324,23 @@ void Upper_Data_Parse_Low_Battery(uint8_t *data_buf, uint8_t num)
 		}
 		App_Delay_ms(50);
 		Bsp_Reset_MCU();
+		break;
+	}
+
+	/* 判断功能字：设置轮子几何参数(cpr, circonference*10, APB*10) */
+	case FUNC_SET_WHEEL_GEOM:
+	{
+		uint16_t cpr    = *(data_buf + 5) << 8 | *(data_buf + 4);
+		uint16_t circ10 = *(data_buf + 7) << 8 | *(data_buf + 6);
+		uint16_t apb10  = *(data_buf + 9) << 8 | *(data_buf + 8);
+		uint8_t verify  = *(data_buf + 10);
+		DEBUG("SET_WHEEL_GEOM cpr=%d circ10=%d apb10=%d v=0x%02X\n", cpr, circ10, apb10, verify);
+		if (cpr == 0 || circ10 == 0 || apb10 == 0) break; // garde anti-trame corrompue
+		Motion_Set_Wheel_Geom((float)cpr, circ10 / 10.0f, apb10 / 10.0f);
+		if (verify == SAVE_VERIFY)
+		{
+			Flash_Set_Wheel_Geom(cpr, circ10, apb10);
+		}
 		break;
 	}
 
@@ -610,6 +634,23 @@ void Upper_Data_Parse(uint8_t *data_buf, uint8_t num)
 					PID_Set_Motor_Parm(MAX_MOTOR, PID_SUNRISE_KP, PID_SUNRISE_KI, PID_SUNRISE_KD);
 				}
 			}
+		}
+		break;
+	}
+
+	/* 判断功能字：设置轮子几何参数(cpr, circonference*10, APB*10) */
+	case FUNC_SET_WHEEL_GEOM:
+	{
+		uint16_t cpr    = *(data_buf + 5) << 8 | *(data_buf + 4);
+		uint16_t circ10 = *(data_buf + 7) << 8 | *(data_buf + 6);
+		uint16_t apb10  = *(data_buf + 9) << 8 | *(data_buf + 8);
+		uint8_t verify  = *(data_buf + 10);
+		DEBUG("SET_WHEEL_GEOM cpr=%d circ10=%d apb10=%d v=0x%02X\n", cpr, circ10, apb10, verify);
+		if (cpr == 0 || circ10 == 0 || apb10 == 0) break; // garde anti-trame corrompue
+		Motion_Set_Wheel_Geom((float)cpr, circ10 / 10.0f, apb10 / 10.0f);
+		if (verify == SAVE_VERIFY)
+		{
+			Flash_Set_Wheel_Geom(cpr, circ10, apb10);
 		}
 		break;
 	}
@@ -1012,6 +1053,23 @@ void Upper_CAN_Execute_Command(uint8_t func, uint8_t* parm)
 					PID_Set_Motor_Parm(MAX_MOTOR, PID_SUNRISE_KP, PID_SUNRISE_KI, PID_SUNRISE_KD);
 				}
 			}
+		}
+		break;
+	}
+
+	/* 判断功能字：设置轮子几何参数(cpr, circonference*10, APB*10) */
+	case FUNC_SET_WHEEL_GEOM:
+	{
+		uint16_t cpr    = parm[1] << 8 | parm[0];
+		uint16_t circ10 = parm[3] << 8 | parm[2];
+		uint16_t apb10  = parm[5] << 8 | parm[4];
+		uint8_t verify  = parm[6];
+		DEBUG("SET_WHEEL_GEOM cpr=%d circ10=%d apb10=%d v=0x%02X\n", cpr, circ10, apb10, verify);
+		if (cpr == 0 || circ10 == 0 || apb10 == 0) break; // garde anti-trame corrompue
+		Motion_Set_Wheel_Geom((float)cpr, circ10 / 10.0f, apb10 / 10.0f);
+		if (verify == SAVE_VERIFY)
+		{
+			Flash_Set_Wheel_Geom(cpr, circ10, apb10);
 		}
 		break;
 	}

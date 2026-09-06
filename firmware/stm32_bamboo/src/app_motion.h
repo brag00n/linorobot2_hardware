@@ -20,6 +20,13 @@
 #define DISTANCE_CIRCLE      (0.204203)
 
 
+// Defauts de la geometrie roue reglable a chaud (valeurs fourwheel actuelles).
+// Stockage flash : cpr en entier, circonference et APB en dixiemes de mm (x10).
+#define WHEEL_GEOM_DEF_CPR       (1320)      // ENCODER_CIRCLE_330
+#define WHEEL_GEOM_DEF_CIRC10    (2152)      // FOURWHEEL_CIRCLE_MM = 215.2 mm
+#define WHEEL_GEOM_DEF_APB10     (1646)      // FOURWHEEL_APB = 164.6 mm
+
+
 // 停止模式，STOP_FREE表示自由停止，STOP_BRAKE表示刹车。
 typedef enum _stop_mode {
     STOP_FREE = 0,
@@ -86,12 +93,16 @@ void Motion_Set_Car_Type(car_type_t car_type);
 float Motion_Get_Circle_MM(void);
 float Motion_Get_APB(void);
 
+void Motion_Set_Wheel_Geom(float cpr, float circ_mm, float apb_mm);
+void Motion_Get_Wheel_Geom(float* cpr, float* circ_mm, float* apb_mm);
+
 
 void Motion_Get_Motor_Speed(float* speed);
 
 
 void Motion_Send_Data(void);
 void Motion_Send_Car_Type(void);
+void Motion_Send_Wheel_Geom(void);
 
 
 #endif

@@ -32,6 +32,7 @@
 #define FUNC_SET_MOTOR_PID        (0x13)
 #define FUNC_SET_YAW_PID          (0x14)
 #define FUNC_CAR_TYPE             (0x15)
+#define FUNC_SET_WHEEL_GEOM       (0x16)   // geometrie roue runtime : cpr + circonference + APB
 
 
 /* 总线舵机相关变量 */

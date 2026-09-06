@@ -41,6 +41,9 @@
 
 #define F_AKM_ANGLE_ADDR          (STM32_FLASH_BASE + FLASH_DATA_SECTOR * STM_SECTOR_SIZE + 0x70)
 
+// Geometrie roue (cpr, circ*10, apb*10), 3 mots de 16 bits = 6 octets
+#define F_WHEEL_GEOM_ADDR         (STM32_FLASH_BASE + FLASH_DATA_SECTOR * STM_SECTOR_SIZE + 0x80)
+
 /******************************Flash 地址配置**********************************************/
 
 
@@ -69,6 +72,9 @@ void Flash_Set_ARM_Median_Value(uint8_t id, uint16_t value);
 void Flash_Read_ARM_Median_Value(uint8_t id, uint16_t* value);
 
 void Flash_Set_AKM_Angle(uint16_t angle);
+
+void Flash_Set_Wheel_Geom(uint16_t cpr, uint16_t circ10, uint16_t apb10);
+void Flash_Read_Wheel_Geom(uint16_t* cpr, uint16_t* circ10, uint16_t* apb10);
 
 void Flash_TestMode_Init(void);
 void Flash_Set_TestMode(uint8_t mode);
