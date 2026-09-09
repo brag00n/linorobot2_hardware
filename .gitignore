@@ -108,3 +108,7 @@ firmware/esp32_wireshare/src/build/esp32.esp32.esp32/WAVE_ROVER_V0.9.ino.map
 firmware/esp32_wireshare/src/build/esp32.esp32.esp32/WAVE_ROVER_V0.9.ino.partitions.bin
 firmware/esp32_wireshare/src/data/devConfig.json
 firmware/esp32_wireshare/src/data/wifiConfig.json
+
+# caches Python (outils de test des cartes)
+__pycache__/
+*.pyc
