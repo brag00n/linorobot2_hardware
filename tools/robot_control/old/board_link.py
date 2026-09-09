@@ -20,11 +20,11 @@ import serial
 from serial.tools import list_ports
 
 # --- Pont vers le protocole partage (firmware/stm32_bamboo/tools) --------------
-# board_link.py est dans <repo>/tools/robot_control/ (tooling multi-cartes) ; le
-# protocole STM32 vit sous <repo>/firmware/stm32_bamboo/tools -> ../../firmware/...
+# board_link.py est dans <repo>/tools/robot_control/old/ (version figee) ; le
+# protocole STM32 vit sous <repo>/firmware/stm32_bamboo/tools -> ../../../firmware/...
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _STM32_TOOLS = os.path.normpath(
-    os.path.join(_HERE, "..", "..", "firmware", "stm32_bamboo", "tools"))
+    os.path.join(_HERE, "..", "..", "..", "firmware", "stm32_bamboo", "tools"))
 if _STM32_TOOLS not in sys.path:
     sys.path.insert(0, _STM32_TOOLS)
 

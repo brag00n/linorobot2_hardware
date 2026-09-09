@@ -5,11 +5,12 @@
 __pycache__/
 *.pyc
 
-# telemetrie runtime de l'app (robot_control/telemetry.py + snapshots d'analyse)
-robot_control/logs/robot_control.jsonl
-robot_control/logs/robot_control.jsonl.*
-robot_control/logs/state.json
-robot_control/logs/state.json.tmp
-robot_control/logs/latest.jpg
-robot_control/logs/latest.jpg.tmp
-robot_control/logs/session_*.jsonl
+# telemetrie runtime de l'app (robot_control/lib/Telemetry.py + snapshots d'analyse)
+# les logs peuvent atterrir dans logs/ de n'importe quel paquet applicatif
+**/logs/robot_control.jsonl
+**/logs/robot_control.jsonl.*
+**/logs/state.json
+**/logs/state.json.tmp
+**/logs/latest.jpg
+**/logs/latest.jpg.tmp
+**/logs/session_*.jsonl

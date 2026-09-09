@@ -35,9 +35,9 @@ import time
 import cv2
 import numpy as np
 
-# face_detect.py est dans le dossier parent (tools/, tooling multi-cartes a la racine)
+# face_detect.py est a la racine tools/ ; ce module est sous robot_control/old/
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_PARENT = os.path.normpath(os.path.join(_HERE, ".."))   # <repo>/tools
+_PARENT = os.path.normpath(os.path.join(_HERE, "..", ".."))   # <repo>/tools
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
