@@ -54,6 +54,23 @@ def apply_flip(frame, mode):
     return frame
 
 
+def apply_rotate(frame, deg):
+    """Rotation libre de l'image autour de son centre (dimensions conservees).
+
+    deg = angle en degres, convention OpenCV : positif = sens ANTI-HORAIRE.
+    Sert a redresser une camera montee de travers. Les dimensions restent
+    identiques (rotation autour du centre) : les coins sortis du cadre sont
+    rognes, les zones decouvertes remplies en noir. Applique en P1 AVANT la
+    detection pour que tout le pipeline (coords normalisees) reste coherent.
+    """
+    if not deg:
+        return frame
+    h, w = frame.shape[:2]
+    m = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), float(deg), 1.0)
+    return cv2.warpAffine(frame, m, (w, h), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT)
+
+
 class Shared:
     """Etat partage P1 <-> P2, protege par un verrou."""
     def __init__(self):

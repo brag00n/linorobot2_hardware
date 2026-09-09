@@ -41,7 +41,7 @@ _PARENT = os.path.normpath(os.path.join(_HERE, ".."))   # <repo>/tools
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from face_detect import find_cascade, apply_flip  # noqa: E402,F401 (apply_flip reexporte)
+from face_detect import find_cascade, apply_flip, apply_rotate  # noqa: E402,F401 (reexportes)
 
 # Modeles vision (DNN/YuNet/VitTrack) livres avec l'ancien toolkit Bambou4WD_python
 # (partages avec le legacy src/interaction/RobotObject.py -> on ne les deplace pas).

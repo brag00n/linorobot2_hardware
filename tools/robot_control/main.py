@@ -35,7 +35,7 @@ from .board_link import BoardLink
 from .motion import Motion
 from .pan_tilt import PanTilt
 from .telemetry import Telemetry
-from .vision import FaceTracker, apply_flip
+from .vision import FaceTracker, apply_flip, apply_rotate
 
 BACKENDS = {"msmf": cv2.CAP_MSMF, "dshow": cv2.CAP_DSHOW, "any": cv2.CAP_ANY}
 MOVE_WATCHDOG_S = 0.35        # arret auto si aucune touche mouvement recente
@@ -209,6 +209,10 @@ def parse_args():
     ap.add_argument("--predict-min-speed", type=float, default=0.4,
                     help="vitesse normalisee/s mini pour declencher un coast a la perte")
     ap.add_argument("--flip", default="v", choices=["none", "v", "h", "180"])
+    ap.add_argument("--rotate", type=float, default=0.0,
+                    help="rotation libre de l'image en deg (convention OpenCV : "
+                         "positif = anti-horaire), pour redresser une camera de "
+                         "travers. Appliquee apres --flip, dimensions conservees")
     ap.add_argument("--pan-gain", type=float, default=10.0)
     ap.add_argument("--tilt-gain", type=float, default=6.0)
     ap.add_argument("--deadzone", type=float, default=0.14,
@@ -429,7 +433,8 @@ def main():
                  "backends msmf/dshow/any). Verifier le branchement.")
     aw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     ah = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"Camera index {used_index} : {aw}x{ah} (backend {used_backend}, flip {args.flip})")
+    print(f"Camera index {used_index} : {aw}x{ah} (backend {used_backend}, "
+          f"flip {args.flip}, rotate {args.rotate})")
     print(f"Carte : {args.port} @ {args.baud}  |  moteurs {'ACTIFS' if motion_on else 'desactives'}")
     print("Fenetre ouverte. F=suivi, Echap=quitter.")
 
@@ -491,6 +496,7 @@ def main():
                 continue
             read_fail = 0
             frame = apply_flip(frame, args.flip)
+            frame = apply_rotate(frame, args.rotate)
             tracker.publish(frame)
 
             faces, main, nx, ny, area_pct, det_fps, seq = tracker.latest()
