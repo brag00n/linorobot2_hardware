@@ -1,0 +1,15 @@
+# environnement Python local (recree par install.ps1 / install.sh)
+.venv/
+
+# caches Python
+__pycache__/
+*.pyc
+
+# telemetrie runtime de l'app (robot_control/telemetry.py + snapshots d'analyse)
+robot_control/logs/robot_control.jsonl
+robot_control/logs/robot_control.jsonl.*
+robot_control/logs/state.json
+robot_control/logs/state.json.tmp
+robot_control/logs/latest.jpg
+robot_control/logs/latest.jpg.tmp
+robot_control/logs/session_*.jsonl

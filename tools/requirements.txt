@@ -1,0 +1,6 @@
+# Dependances du tooling robot_control (vision + teleop + MCP d'analyse).
+# Versions epinglees = celles validees au banc (Python 3.13, Windows).
+# opencv-python fournit cv2 (detecteurs YuNet/DNN + tracker VitTrack) et tire numpy.
+opencv-python==4.11.0.86
+numpy==2.5.3
+pyserial==3.5
