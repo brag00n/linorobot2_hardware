@@ -1,0 +1,7 @@
+# caches Python
+__pycache__/
+*.pyc
+
+# fichiers de sauvegarde / brouillons
+*.sav.py
+Bambou4WD_python/src/resources/Boards/sav/
