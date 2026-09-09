@@ -4,10 +4,15 @@
       "command": "C:\\Users\\OlivierCousinier\\.platformio\\penv\\Scripts\\python.exe",
       "args": ["C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\firmware\\stm32_bamboo\\tools\\ros_mcp_server.py"],
       "env": {
-        "BAMBOU_PORT": "COM5",
+        "BAMBOU_PORT": "COM4",
         "BAMBOU_BAUD": "115200",
         "BAMBOU_CPR": "1320"
       }
+    },
+    "robot-control": {
+      "command": "C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools\\rc_mcp_server.py"],
+      "env": {}
     }
   }
 }
