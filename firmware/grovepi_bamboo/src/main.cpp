@@ -2,250 +2,285 @@
  * main.cpp - Firmware carte capteurs "GrovePi+ Bambou" (ATmega328P @ 16 MHz).
  *
  * Detourne l'ATmega328P de la GrovePi+ v3.0 en microcontrolleur autonome qui
- * agrege un IMU MPU6050 (I2C) et 4 telemetres ultrason HC-SR04, et les expose
- * sur l'UART dans le MEME format de trame que la STM32 Bamboo v4.
+ * agrege un IMU MPU6050 (I2C), 4 telemetres ultrason HC-SR04 et un telemetre IR
+ * Sharp GP2Y0A710K0F, et les expose sur l'UART dans le MEME format de trame que
+ * la STM32 Bamboo v4.
  *
- * --- Protocole (miroir de ../stm32_bamboo/tools/ros_monitor.py) -------------
- *   Trame little-endian :  [0xFF][ID][LEN][FUNC][donnees...][CHK]
- *     0xFF  = entete
- *     ID    = 0xFC hote->carte, 0xFB carte->hote
- *     LEN   = nb d'octets a partir de LEN inclus (= taille_totale - 2)
- *     FUNC  = code fonction (voir ci-dessous)
- *     CHK   = somme(octets[2..fin-1]) & 0xFF
+ * Ce fichier ne fait plus que l'ORCHESTRATION : chaque device vit dans lib/
+ * (Mpu6050, Ultrasonic, SharpIR), le protocole dans lib/Protocol, la config
+ * persistante dans lib/DeviceConfig. Miroir des app_*.c / bsp_*.c de la STM32.
  *
- *   FUNC :
- *     0x50 REQUEST_DATA (hote->carte) : payload [subfunc] -> renvoie la trame subfunc
- *     0x51 VERSION      (carte->hote) : [major, minor]
- *     0x60 REPORT_IMU   (carte->hote) : roll,pitch (int16 deg*100 FUSIONNES)
- *                                       + ax,ay,az,gx,gy,gz (int16 bruts)
- *     0x61 REPORT_ULTRA (carte->hote) : dist[4] (uint16 mm ; 0xFFFF = pas d'echo)
+ * --- Protocole (voir README.md et lib/Protocol/Protocol.h) ------------------
+ *   Trame : [0xFF][ID][LEN][FUNC][donnees...][CHK]  (little-endian)
+ *     ID 0xFC hote->carte / 0xFB carte->hote ; LEN = taille_totale-2 ;
+ *     CHK = somme(octets[2..fin-1]) & 0xFF.
+ *   0x50 REQUEST_DATA [subfunc][param] : lecture a la demande
+ *   0x51 VERSION      [major][minor][patch]      (= test de contact)
+ *   0x52 TIME_SYNC    req [seq] -> ack [seq][t_board u32]  (echo horloge, synchro)
+ *   0x53 STATUS       [board_state][n]+n*[dev_id][health]
+ *   0x54 CONFIG       [dev_id][enabled][pinA][pinB][period u16][health]
+ *   0x55 SET_CONFIG   [dev_id][enabled][pinA][pinB][period u16]   (RAM seule)
+ *   0x56 CONFIG_ACTION [action][guard]  -> ack [action][result]   (EEPROM)
+ *   0x60/0x61/0x62 REPORT_* : [ts u32 ms] en tete + donnees (auto-report)
  *
- *   Auto-report : IMU et ultrasons sont diffuses spontanement (~20 Hz), comme
- *   l'auto-report de la STM32. REQUEST_DATA permet en plus une lecture a la demande.
+ *   Horodatage : chaque trame report porte un timestamp (horloge monotone
+ *   interne, Timer2 ISR). TIME_SYNC permet a l'hote d'estimer l'offset
+ *   carte<->ROS pour fusionner les mesures de plusieurs cartes.
  *
- * --- Budget temps reel (cf. discussion) -------------------------------------
- *   pulseIn() est BLOQUANT. Lire les 4 HC-SR04 d'affilee (pire cas ~4x le
- *   timeout) figerait le filtre complementaire. On lit donc UN capteur par tour
- *   de boucle (round-robin) et on met a jour l'IMU a CHAQUE tour -> angle
- *   reactif (~kHz possible), chaque ultrason rafraichi a ~loop/4.
+ * --- Budget temps reel ------------------------------------------------------
+ *   pulseIn() (HC-SR04) est BLOQUANT : on lit UN capteur par tour de boucle
+ *   (round-robin, canaux desactives sautes) et on met a jour l'IMU a CHAQUE
+ *   tour -> angle reactif, chaque ultrason rafraichi a ~loop/N.
  *
- * --- Cablage (a confirmer sur la carte reelle) ------------------------------
- *   MPU6050  : SDA=A4, SCL=A5 (bus I2C du 328P = ports I2C Grove). Adr 0x68.
- *   HC-SR04  : 1 capteur par port digital Grove (2 lignes signal = Trig+Echo).
- *              Defaut : Trig=D2/D4/D6/D8, Echo=D3/D5/D7/D9. 5 V direct (328P @5V).
+ * --- Cablage (defauts, reconfigurable a chaud par SET_CONFIG) ----------------
+ *   MPU6050 : SDA=A4, SCL=A5, adr 0x68.  HC-SR04 : Trig=D2/D4/D6/D8,
+ *   Echo=D3/D5/D7/D9.  Sharp IR : Vo=A0, VCC/GND doubles, cond. ~10 uF.
  *   NE PAS utiliser D0/D1 (UART) ni A4/A5 (I2C).
  */
 #include <Arduino.h>
 #include <Wire.h>
-
-// --- Protocole --------------------------------------------------------------
-static const uint8_t PTO_HEAD  = 0xFF;
-static const uint8_t PTO_ID_RX = 0xFC;   // hote -> carte
-static const uint8_t PTO_ID_TX = 0xFB;   // carte -> hote
-static const uint8_t FUNC_REQUEST_DATA = 0x50;
-static const uint8_t FUNC_VERSION      = 0x51;
-static const uint8_t FUNC_REPORT_IMU   = 0x60;
-static const uint8_t FUNC_REPORT_ULTRA = 0x61;
+#include "Protocol.h"
+#include "Clock.h"
+#include "Mpu6050.h"
+#include "Ultrasonic.h"
+#include "SharpIR.h"
+#include "DeviceConfig.h"
 
 #ifndef FW_VERSION_MAJOR
 #define FW_VERSION_MAJOR 0
 #endif
 #ifndef FW_VERSION_MINOR
-#define FW_VERSION_MINOR 1
+#define FW_VERSION_MINOR 2
+#endif
+#ifndef FW_VERSION_PATCH
+#define FW_VERSION_PATCH 0
 #endif
 
 static const uint32_t BAUD = 115200;
-static const uint16_t REPORT_PERIOD_MS = 50;   // auto-report ~20 Hz
 
-// --- MPU6050 ----------------------------------------------------------------
-static const uint8_t MPU_ADDR       = 0x68;
-static const uint8_t MPU_PWR_MGMT_1 = 0x6B;
-static const uint8_t MPU_ACCEL_XOUT = 0x3B;
-static const float   ACC_LSB_PER_G   = 16384.0f;  // +-2 g
-static const float   GYR_LSB_PER_DPS = 131.0f;    // +-250 deg/s
-static const float   COMP_ALPHA      = 0.98f;     // poids gyro du filtre complementaire
+// --- Devices ----------------------------------------------------------------
+static Mpu6050      imu;
+static Ultrasonic   sonar[4];
+static SharpIR      ir;
+static DeviceConfig cfg;
 
-// --- HC-SR04 (round-robin) --------------------------------------------------
-static const uint8_t N_SONAR = 4;
-static const uint8_t TRIG_PIN[N_SONAR] = {2, 4, 6, 8};
-static const uint8_t ECHO_PIN[N_SONAR] = {3, 5, 7, 9};
-static const uint16_t MAX_RANGE_CM   = 250;                       // portee plafonnee
-static const uint32_t ECHO_TIMEOUT_US = (uint32_t)MAX_RANGE_CM * 58UL + 400UL;
-static const uint16_t DIST_NONE = 0xFFFF;                          // pas d'echo
-
-// Etat IMU fusionne
-static float rollDeg = 0.0f, pitchDeg = 0.0f;
-static int16_t ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
-static uint32_t lastImuUs = 0;
-
-// Distances courantes (mm), rafraichies une a la fois
-static uint16_t distMm[N_SONAR] = {DIST_NONE, DIST_NONE, DIST_NONE, DIST_NONE};
+// --- Etat ordonnanceur (timers par device) ---------------------------------
 static uint8_t  sonarIdx = 0;
+static uint32_t imuLastMs = 0, ultraLastMs = 0, irLastMs = 0;
 
-static uint32_t lastReportMs = 0;
-
-// --- Emission de trame -------------------------------------------------------
-static void sendFrame(uint8_t func, const uint8_t *data, uint8_t n) {
-  uint8_t len = n + 3;                       // LEN + FUNC + data + CHK, -1
-  uint8_t sum = len + func;
-  for (uint8_t i = 0; i < n; i++) sum += data[i];
-  Serial.write(PTO_HEAD);
-  Serial.write(PTO_ID_TX);
-  Serial.write(len);
-  Serial.write(func);
-  if (n) Serial.write(data, n);
-  Serial.write((uint8_t)(sum & 0xFF));
-}
-
-static inline void put16(uint8_t *b, int16_t v) {   // little-endian
-  b[0] = (uint8_t)(v & 0xFF);
-  b[1] = (uint8_t)((v >> 8) & 0xFF);
-}
-
+// --- Emission des trames report ---------------------------------------------
 static void sendVersion() {
-  uint8_t d[2] = {FW_VERSION_MAJOR, FW_VERSION_MINOR};
-  sendFrame(FUNC_VERSION, d, 2);
+  uint8_t d[3] = { FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH };
+  sendFrame(FUNC_VERSION, d, 3);
 }
 
+// Les trames report portent un timestamp uint32 (ms, horloge monotone interne)
+// en TETE de payload -> l'hote fusionne les mesures dans un referentiel commun.
 static void sendImu() {
-  uint8_t d[16];
-  put16(&d[0],  (int16_t)(rollDeg  * 100.0f));
-  put16(&d[2],  (int16_t)(pitchDeg * 100.0f));
-  put16(&d[4],  ax); put16(&d[6],  ay); put16(&d[8],  az);
-  put16(&d[10], gx); put16(&d[12], gy); put16(&d[14], gz);
-  sendFrame(FUNC_REPORT_IMU, d, 16);
+  uint8_t d[20];
+  put32(&d[0], Clock::nowMs());
+  put16(&d[4],  (uint16_t)imu.roll100());
+  put16(&d[6],  (uint16_t)imu.pitch100());
+  put16(&d[8],  (uint16_t)imu.ax()); put16(&d[10], (uint16_t)imu.ay());
+  put16(&d[12], (uint16_t)imu.az()); put16(&d[14], (uint16_t)imu.gx());
+  put16(&d[16], (uint16_t)imu.gy()); put16(&d[18], (uint16_t)imu.gz());
+  sendFrame(FUNC_REPORT_IMU, d, 20);
 }
 
 static void sendUltra() {
-  uint8_t d[N_SONAR * 2];
-  for (uint8_t i = 0; i < N_SONAR; i++) {
-    d[2 * i]     = (uint8_t)(distMm[i] & 0xFF);
-    d[2 * i + 1] = (uint8_t)((distMm[i] >> 8) & 0xFF);
+  uint8_t d[12];
+  put32(&d[0], Clock::nowMs());
+  for (uint8_t i = 0; i < 4; i++) {
+    uint16_t v = cfg.slot(SLOT_U0 + i).enabled ? sonar[i].last() : DIST_NONE;
+    put16(&d[4 + 2 * i], v);
   }
-  sendFrame(FUNC_REPORT_ULTRA, d, sizeof(d));
+  sendFrame(FUNC_REPORT_ULTRA, d, 12);
 }
 
-// --- MPU6050 ----------------------------------------------------------------
-static bool mpuInit() {
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(MPU_PWR_MGMT_1);
-  Wire.write(0x00);                          // reveil (sort du sleep)
-  return Wire.endTransmission() == 0;
+static void sendIr() {
+  uint8_t d[8];
+  put32(&d[0], Clock::nowMs());
+  put16(&d[4], ir.last());       // distance mm (0xFFFF = hors plage)
+  put16(&d[6], ir.rawAdc());     // adc brut (pour calibration)
+  sendFrame(FUNC_REPORT_IR, d, 8);
 }
 
-static void mpuRead() {
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(MPU_ACCEL_XOUT);
-  if (Wire.endTransmission(false) != 0) return;
-  if (Wire.requestFrom((int)MPU_ADDR, 14) != 14) return;
-  ax = (Wire.read() << 8) | Wire.read();
-  ay = (Wire.read() << 8) | Wire.read();
-  az = (Wire.read() << 8) | Wire.read();
-  Wire.read(); Wire.read();                  // temperature (ignoree)
-  gx = (Wire.read() << 8) | Wire.read();
-  gy = (Wire.read() << 8) | Wire.read();
-  gz = (Wire.read() << 8) | Wire.read();
-}
-
-// Filtre complementaire : fusionne l'angle accel (absolu, bruite) et
-// l'integration gyro (lisse, derive) a chaque tour de boucle.
-static void imuUpdate() {
-  mpuRead();
-  uint32_t now = micros();
-  float dt = (now - lastImuUs) * 1e-6f;
-  lastImuUs = now;
-  if (dt <= 0.0f || dt > 0.5f) return;       // premier tour / trou -> on saute
-
-  float axf = ax / ACC_LSB_PER_G;
-  float ayf = ay / ACC_LSB_PER_G;
-  float azf = az / ACC_LSB_PER_G;
-  float rollAcc  = atan2(ayf, azf) * 57.29578f;
-  float pitchAcc = atan2(-axf, sqrt(ayf * ayf + azf * azf)) * 57.29578f;
-
-  float gxDps = gx / GYR_LSB_PER_DPS;
-  float gyDps = gy / GYR_LSB_PER_DPS;
-  rollDeg  = COMP_ALPHA * (rollDeg  + gxDps * dt) + (1.0f - COMP_ALPHA) * rollAcc;
-  pitchDeg = COMP_ALPHA * (pitchDeg + gyDps * dt) + (1.0f - COMP_ALPHA) * pitchAcc;
-}
-
-// --- HC-SR04 : un capteur par appel (round-robin) ---------------------------
-static void sonarStep() {
-  uint8_t i = sonarIdx;
-  digitalWrite(TRIG_PIN[i], LOW);
-  delayMicroseconds(3);
-  digitalWrite(TRIG_PIN[i], HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN[i], LOW);
-  uint32_t dur = pulseIn(ECHO_PIN[i], HIGH, ECHO_TIMEOUT_US);
-  if (dur == 0) {
-    distMm[i] = DIST_NONE;                    // pas d'echo (hors portee)
-  } else {
-    uint32_t mm = (dur * 10UL) / 58UL;        // aller-retour : 58 us/cm
-    distMm[i] = (mm > 65534UL) ? 65534 : (uint16_t)mm;
+// --- Sante d'un slot (octet health de STATUS/CONFIG) ------------------------
+static uint8_t slotHealth(uint8_t s) {
+  if (!cfg.slot(s).enabled) return HLTH_DISABLED;
+  switch (s) {
+    case SLOT_IMU: return imu.health();
+    case SLOT_IR:  return ir.health();
+    case SLOT_U0: case SLOT_U1: case SLOT_U2: case SLOT_U3:
+      return sonar[s - SLOT_U0].health();
+    case SLOT_ULTRA: {                        // groupe : pire canal active
+      uint8_t worst = HLTH_OK;
+      for (uint8_t i = 0; i < 4; i++)
+        if (cfg.slot(SLOT_U0 + i).enabled) {
+          uint8_t h = sonar[i].health();
+          if (h > worst) worst = h;
+        }
+      return worst;
+    }
+    default: return HLTH_OK;
   }
-  sonarIdx = (sonarIdx + 1) % N_SONAR;
+}
+
+static void sendConfig(uint8_t devId) {
+  int8_t s = DeviceConfig::slotOf(devId);
+  if (s < 0) return;
+  DevCfg &c = cfg.slot(s);
+  uint8_t d[7];
+  d[0] = devId; d[1] = c.enabled; d[2] = c.pinA; d[3] = c.pinB;
+  put16(&d[4], c.periodMs);
+  d[6] = slotHealth(s);
+  sendFrame(FUNC_CONFIG, d, 7);
+}
+
+static void sendStatus() {
+  uint8_t d[2 + NUM_CFG * 2];
+  uint8_t k = 2, board = BOARD_OK;
+  for (uint8_t s = 0; s < NUM_CFG; s++) {
+    uint8_t h = slotHealth(s);
+    d[k++] = DeviceConfig::devIdOf(s);
+    d[k++] = h;
+    if (cfg.slot(s).enabled && healthIsError(h)) {
+      if (s == SLOT_IMU) board = BOARD_FAULT;               // capteur principal
+      else if (board < BOARD_DEGRADED) board = BOARD_DEGRADED;
+    }
+  }
+  d[0] = board;
+  d[1] = NUM_CFG;
+  sendFrame(FUNC_STATUS, d, k);
+}
+
+static void sendActionAck(uint8_t action, uint8_t result) {
+  uint8_t d[2] = { action, result };
+  sendFrame(FUNC_CONFIG_ACTION, d, 2);
+}
+
+// --- (Re)configuration materielle depuis la table de config -----------------
+static void applySlot(uint8_t s) {
+  DevCfg &c = cfg.slot(s);
+  switch (s) {
+    case SLOT_IMU: imu.begin(c.pinA); break;                // pinA = adresse I2C
+    case SLOT_IR:  ir.begin(c.pinA);  break;                // pinA = broche analog
+    case SLOT_U0: case SLOT_U1: case SLOT_U2: case SLOT_U3:
+      sonar[s - SLOT_U0].setPins(c.pinA, c.pinB); break;
+    default: break;                                         // groupe ULTRA : rien
+  }
+}
+
+static void applyAllConfig() {
+  for (uint8_t s = 0; s < NUM_CFG; s++) applySlot(s);
 }
 
 // --- Reception : commandes hote -> carte ------------------------------------
-static uint8_t rxBuf[16];
-static uint8_t rxLen = 0;
-
 static void handleFrame(uint8_t func, const uint8_t *data, uint8_t n) {
+  // TIME_SYNC : echo immediat de l'horloge monotone (l'horloge n'est PAS modifiee).
+  // L'hote mesure t1/t2 autour de l'echange et estime l'offset carte<->ROS.
+  if (func == FUNC_TIME_SYNC && n >= 1) {
+    uint8_t d[5];
+    d[0] = data[0];                    // seq echo (correlation requete/reponse)
+    put32(&d[1], Clock::nowMs());
+    sendFrame(FUNC_TIME_SYNC, d, 5);
+    return;
+  }
+
   if (func == FUNC_REQUEST_DATA && n >= 1) {
+    uint8_t param = (n >= 2) ? data[1] : DEV_ALL;
     switch (data[0]) {
-      case FUNC_VERSION:      sendVersion(); break;
-      case FUNC_REPORT_IMU:   sendImu();     break;
-      case FUNC_REPORT_ULTRA: sendUltra();   break;
+      case FUNC_VERSION:      sendVersion();     break;
+      case FUNC_STATUS:       sendStatus();      break;
+      case FUNC_CONFIG:       sendConfig(param); break;
+      case FUNC_REPORT_IMU:   sendImu();         break;
+      case FUNC_REPORT_ULTRA: sendUltra();       break;
+      case FUNC_REPORT_IR:    ir.read(); sendIr(); break;
       default: break;
     }
+    return;
+  }
+
+  // SET_CONFIG : applique en RAM (jamais d'EEPROM ici) + reconfig materielle.
+  if (func == FUNC_SET_CONFIG && n >= 6) {
+    uint8_t devId = data[0];
+    int8_t s = DeviceConfig::slotOf(devId);
+    if (s < 0) return;
+    DevCfg &c = cfg.slot(s);
+    if (data[1] != CFG_KEEP8) c.enabled = data[1] ? 1 : 0;
+    if (data[2] != CFG_KEEP8) c.pinA = data[2];
+    if (data[3] != CFG_KEEP8) c.pinB = data[3];
+    uint16_t period = get16(&data[4]);
+    if (period != 0) c.periodMs = period;                   // 0 = garder
+    applySlot(s);
+    sendConfig(devId);                                       // accuse par un 0x54
+    return;
+  }
+
+  // CONFIG_ACTION : sauvegarde / defauts / reload EEPROM (trame dediee, gardee).
+  if (func == FUNC_CONFIG_ACTION && n >= 2) {
+    uint8_t action = data[0], guard = data[1];
+    if (guard != SAVE_VERIFY) { sendActionAck(action, CFG_RES_BADGUARD); return; }
+    uint8_t res;
+    switch (action) {
+      case CFG_ACT_SAVE:
+        res = cfg.save();
+        break;
+      case CFG_ACT_DEFAULTS:
+        cfg.loadDefaults(); applyAllConfig(); res = cfg.save();
+        break;
+      case CFG_ACT_RELOAD:
+        res = cfg.reload(); if (res == CFG_RES_DONE) applyAllConfig();
+        break;
+      default:
+        res = CFG_RES_BADGUARD;                             // action inconnue
+        break;
+    }
+    sendActionAck(action, res);
+    return;
   }
 }
 
-// Machine a etats de reception (tolere le bruit, resync sur l'entete)
+static FrameParser parser(handleFrame);
+
 static void rxPoll() {
-  while (Serial.available()) {
-    uint8_t b = Serial.read();
-    if (rxLen == 0) { if (b == PTO_HEAD) rxBuf[rxLen++] = b; continue; }
-    if (rxLen == 1) { if (b == PTO_ID_RX) rxBuf[rxLen++] = b; else rxLen = 0; continue; }
-    rxBuf[rxLen++] = b;
-    if (rxLen >= 3) {
-      uint8_t total = rxBuf[2] + 2;
-      if (total < 5 || total > sizeof(rxBuf)) { rxLen = 0; continue; }
-      if (rxLen == total) {
-        uint8_t sum = 0;
-        for (uint8_t i = 2; i < total - 1; i++) sum += rxBuf[i];
-        if (sum == rxBuf[total - 1])
-          handleFrame(rxBuf[3], &rxBuf[4], total - 5);
-        rxLen = 0;
-      }
-    }
+  while (Serial.available()) parser.feed((uint8_t)Serial.read());
+}
+
+// UN ultrason par appel (round-robin), canaux desactives sautes.
+static void sonarStep() {
+  for (uint8_t tries = 0; tries < 4; tries++) {
+    uint8_t i = sonarIdx;
+    sonarIdx = (sonarIdx + 1) & 3;
+    if (cfg.slot(SLOT_U0 + i).enabled) { sonar[i].ping(); return; }
   }
+}
+
+static bool due(uint32_t &last, uint16_t period, uint32_t now) {
+  if (period == 0) return false;                            // 0 = report desactive
+  if (now - last < period) return false;
+  last = now;
+  return true;
 }
 
 // --- Arduino ----------------------------------------------------------------
 void setup() {
   Serial.begin(BAUD);
+  Clock::begin();       // horloge monotone (Timer2 ISR) : referentiel de temps
   Wire.begin();
   Wire.setClock(400000);
-  mpuInit();
-  for (uint8_t i = 0; i < N_SONAR; i++) {
-    pinMode(TRIG_PIN[i], OUTPUT);
-    digitalWrite(TRIG_PIN[i], LOW);
-    pinMode(ECHO_PIN[i], INPUT);
-  }
-  lastImuUs = micros();
-  sendVersion();                              // annonce au demarrage
+  cfg.begin();          // charge EEPROM si valide, sinon defauts compiles
+  applyAllConfig();     // configure IMU / ultrasons / IR selon la table
+  sendVersion();        // annonce au demarrage
 }
 
 void loop() {
-  rxPoll();                                   // commandes eventuelles
-  imuUpdate();                                // IMU a CHAQUE tour (reactif)
-  sonarStep();                                // UN ultrason par tour (round-robin)
+  rxPoll();                                        // commandes eventuelles
+  if (cfg.slot(SLOT_IMU).enabled) imu.update();    // IMU a CHAQUE tour (reactif)
+  sonarStep();                                     // UN ultrason par tour
 
   uint32_t now = millis();
-  if (now - lastReportMs >= REPORT_PERIOD_MS) {
-    lastReportMs = now;
-    sendImu();
-    sendUltra();
-  }
+  if (cfg.slot(SLOT_IMU).enabled   && due(imuLastMs,   cfg.slot(SLOT_IMU).periodMs,   now)) sendImu();
+  if (cfg.slot(SLOT_ULTRA).enabled && due(ultraLastMs, cfg.slot(SLOT_ULTRA).periodMs, now)) sendUltra();
+  if (cfg.slot(SLOT_IR).enabled    && due(irLastMs,    cfg.slot(SLOT_IR).periodMs,    now)) { ir.read(); sendIr(); }
 }
