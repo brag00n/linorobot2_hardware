@@ -27,5 +27,6 @@ class BoardNode(Node):
         snap = self.link.snapshot()
         self._out.set(BoardTelemetry(
             battery=snap.get("battery"), yaw=snap.get("yaw"),
+            roll=snap.get("roll"), pitch=snap.get("pitch"),
             vx=snap.get("vx", 0.0), vy=snap.get("vy", 0.0), vz=snap.get("vz", 0.0),
             encoders=snap.get("encoders"), ok=snap.get("ok", 0), bad=snap.get("bad", 0)))

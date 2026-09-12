@@ -237,6 +237,7 @@ class RobotComSerial:
         with self.lock:
             return {
                 "battery": self.battery, "yaw": self.yaw,
+                "roll": self.roll, "pitch": self.pitch,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
                 "ok": self.ok, "bad": self.bad,

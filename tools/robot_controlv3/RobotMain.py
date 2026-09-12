@@ -36,11 +36,13 @@ import os
 import time
 
 import cv2
+import numpy as np
 
 # --- reutilisation par import : CLI, overlay et constantes de robot_control -----
 # (memes flags, meme incrustation, memes codes clavier -> comportement identique)
 from robot_control.RobotMain import (
-    parse_args, draw_overlay,
+    parse_args,
+    _overlay_detections, _overlay_main_marker, _overlay_reticle, _overlay_prediction,
     MOVE_WATCHDOG_S, KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN, SERVO_STEP,
 )
 from robot_control.lib.Telemetry import Telemetry
@@ -50,8 +52,329 @@ from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
 from robot_control.mcp import gateway
 
 from .roslite import Executor
-from .nodes import CameraNode, TrackingNode, ServoNode, BoardNode
-from .msgs import TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics, ServoState
+from .nodes import CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode
+from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
+                   ServoState, GrovePiTelemetry)
+
+
+# ===========================================================================
+# HUD v3 : 3 cartes materielles (CAM / STM32 / GROVE), une par coin, chacune dans
+# un rectangle pointille de TAILLE FIXE (cadre grise + « -- » si materiel absent).
+# Les marqueurs centraux (detections/reticule/predit) restent ceux de robot_control
+# (via _draw_image_markers) ; seul le HUD TEXTE est remplace par ces cartes, ou
+# chaque champ occupe une colonne fixe (une valeur qui change ne decale rien).
+# ===========================================================================
+def _blank_frame(w, h):
+    """Toile noire (ndarray BGR) servant de support d'affichage sans camera.
+
+    Permet a l'app de rester une IHM VISUELLE meme camera absente : on y incruste
+    les capteurs GrovePi et l'etat des composants (exigence « demarrer sans camera,
+    afficher les capteurs en temps reel »)."""
+    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    cv2.putText(frame, "Pas de camera - capteurs en temps reel", (10, h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 80, 80), 2)
+    return frame
+
+
+# --- palette commune des cartes HUD ----------------------------------------
+_FONT = cv2.FONT_HERSHEY_SIMPLEX
+_C_BORDER = (95, 95, 95)          # cadre pointille (carte presente)
+_C_BORDER_OFF = (55, 55, 55)      # cadre pointille (carte absente)
+_C_TITLE = (235, 235, 235)
+_C_TITLE_OFF = (110, 110, 110)
+_C_LABEL = (150, 150, 150)        # libelles (gris)
+_C_VAL = (235, 235, 235)          # valeurs (blanc)
+_C_ON = (0, 220, 0)               # etat actif / present
+_C_OFF = (120, 120, 120)          # etat inactif / absent
+_C_WARN = (0, 165, 255)           # orange (soutenu / silencieux)
+_C_BAD = (0, 0, 255)              # rouge (coup de butoir)
+_C_IMU = (0, 255, 255)            # cyan (IMU)
+
+
+def _put(frame, x, y, text, col, scale=0.45, thick=1):
+    cv2.putText(frame, text, (int(x), int(y)), _FONT, scale, col, thick, cv2.LINE_AA)
+
+
+def _dashed_line(frame, p1, p2, col, dash=7, gap=5, thick=1):
+    x1, y1 = p1
+    x2, y2 = p2
+    dist = int(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5)
+    if dist == 0:
+        return
+    for i in range(0, dist, dash + gap):
+        a, b = i / dist, min(i + dash, dist) / dist
+        cv2.line(frame, (int(x1 + (x2 - x1) * a), int(y1 + (y2 - y1) * a)),
+                 (int(x1 + (x2 - x1) * b), int(y1 + (y2 - y1) * b)), col, thick)
+
+
+def _dashed_rect(frame, x, y, w, h, col):
+    _dashed_line(frame, (x, y), (x + w, y), col)
+    _dashed_line(frame, (x + w, y), (x + w, y + h), col)
+    _dashed_line(frame, (x + w, y + h), (x, y + h), col)
+    _dashed_line(frame, (x, y + h), (x, y), col)
+
+
+def _card_bg(frame, x, y, w, h, alpha=0.55):
+    """Fond semi-transparent FONCE derriere la carte : melange un rectangle noir
+    avec l'image (via addWeighted sur la ROI) pour que le texte clair reste lisible
+    par-dessus le flux camera. Borne la ROI aux limites de l'image."""
+    fh, fw = frame.shape[:2]
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(fw, x + w), min(fh, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return
+    roi = frame[y0:y1, x0:x1]
+    roi[:] = cv2.addWeighted(roi, 1.0 - alpha, np.zeros_like(roi), 0.0, 0.0)
+
+
+def _card_frame(frame, x, y, w, h, title, port, present, active):
+    """Cadre pointille (TAILLE FIXE) + en-tete « ● TITRE  port ». Rend l'y du 1er
+    contenu. present -> cadre/titre clairs ; active -> pastille verte."""
+    _card_bg(frame, x, y, w, h)
+    _dashed_rect(frame, x, y, w, h, _C_BORDER if present else _C_BORDER_OFF)
+    hy = y + 18
+    cv2.circle(frame, (x + 13, hy - 5), 5, _C_ON if active else _C_OFF, -1)
+    _put(frame, x + 25, hy, title, _C_TITLE if present else _C_TITLE_OFF, 0.5)
+    if port:
+        _put(frame, x + 92, hy, port, _C_LABEL if present else _C_TITLE_OFF, 0.45)
+    return y + 38
+
+
+def _row(frame, x, y, fields):
+    """Une ligne = suite de (dx, texte, couleur) a colonnes FIXES (dx depuis x).
+    Chaque champ est dessine independamment -> une valeur qui change de longueur
+    ne decale JAMAIS ses voisins (exigence : format stable)."""
+    for dx, text, col in fields:
+        _put(frame, x + dx, y, text, col)
+
+
+def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps, tstate):
+    """Carte CAM (haut-gauche) : source + etats suivi/detecteur/tracker + perf + pred."""
+    present = bool(camnode.available)
+    if present:
+        idx = getattr(camnode.cam, "index", "?")
+        port = f"idx{idx} {camnode.width}x{camnode.height}"
+    else:
+        port = "absente"
+    yc = _card_frame(frame, x, y, 320, 141, "CAM", port, present, active)
+
+    locked = bool(tstate.get("locked"))
+    src = tstate.get("src")
+    on_tracker = locked and src == "track"
+    sc = tstate.get("score")
+    rd = tstate.get("raw_det")
+    trk = tstate.get("mode", "none")
+    pm = tstate.get("predict_mode", "off")
+
+    lock_txt = f"ON({src})" if locked else "off"
+    _row(frame, x, yc, [
+        (10, "suivi", _C_LABEL), (78, "ON" if active else "off", _C_ON if active else _C_OFF),
+        (150, "det", _C_LABEL), (200, met.detector or "?", _C_VAL)])
+    _row(frame, x, yc + 19, [
+        (10, "trk", _C_LABEL), (78, trk, _C_VAL),
+        (150, "lock", _C_LABEL), (200, lock_txt, _C_ON if locked else _C_OFF)])
+    _row(frame, x, yc + 38, [
+        (10, "sc", _C_LABEL), (78, f"{sc:.2f}" if sc is not None else "--", _C_VAL),
+        (150, "det", _C_LABEL),
+        (200, ("hit" if rd else "miss") if (locked and rd is not None) else "--",
+         _C_ON if rd else _C_OFF)])
+    _row(frame, x, yc + 57, [
+        (10, "P1", _C_LABEL), (48, f"{p1_fps:4.0f}", _C_VAL),
+        (110, "P2", _C_LABEL), (148, f"{met.det_fps:4.0f}", _C_VAL),
+        (210, "vis", _C_LABEL), (258, f"{n_faces:d}", _C_VAL)])
+    if pm != "off":
+        v = tstate.get("pred_speed") or 0.0
+        err = tstate.get("pred_err")
+        _row(frame, x, yc + 76, [
+            (10, "pred", _C_LABEL), (78, pm, _C_VAL),
+            (150, "v", _C_LABEL), (172, f"{v:.2f}", _C_VAL),
+            (230, "err", _C_LABEL), (272, f"{err:.3f}" if err is not None else "--", _C_VAL)])
+    else:
+        _row(frame, x, yc + 76, [(10, "pred", _C_LABEL), (78, "off", _C_OFF)])
+
+
+def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth):
+    """Carte STM32 (haut-droit) : etats moteurs/lissage + servos + fluidite + IMU carte."""
+    port = f"{port_name} {'OK' if snap.get('ok') else '--'}"
+    yc = _card_frame(frame, x, y, 320, 141, "STM32", port, present, present)
+
+    ms = pt.motionStats() or {}
+    step_max = ms.get("step_max", 0.0)
+    vmax = max(abs(ms.get("vel_pan", 0.0)), abs(ms.get("vel_tilt", 0.0)))
+    mcol = _C_ON if step_max < 2.0 else _C_WARN if step_max < 4.0 else _C_BAD
+    batt = f"{snap['battery']:.1f}V" if snap.get("battery") is not None else "--"
+
+    def _ang(v):
+        return f"{v:+6.1f}" if v is not None else "    --"
+
+    _row(frame, x, yc, [
+        (10, "moteurs", _C_LABEL), (98, "ON" if motion_on else "OFF",
+                                    _C_ON if motion_on else _C_OFF),
+        (170, "lissage", _C_LABEL), (258, "ON" if smooth else "off",
+                                     _C_ON if smooth else _C_OFF)])
+    _row(frame, x, yc + 19, [
+        (10, "pan  S1", _C_LABEL), (98, f"{pt.angleH:4.0f}deg", _C_VAL),
+        (170, "tilt S2", _C_LABEL), (258, f"{pt.angleV:4.0f}deg", _C_VAL)])
+    _row(frame, x, yc + 38, [
+        (10, "pas-max", _C_LABEL), (98, f"{step_max:4.1f}deg", mcol),
+        (170, "v", _C_LABEL), (258, f"{vmax:4.0f}deg/s", mcol)])
+    _row(frame, x, yc + 57, [
+        (10, "batt", _C_LABEL), (98, batt, _C_VAL)])
+    # IMU de la carte STM32 (attitude roll/pitch/yaw, trame 0x0C)
+    _row(frame, x, yc + 76, [
+        (10, "IMU roll", _C_LABEL), (95, _ang(snap.get("roll")), _C_IMU),
+        (170, "pitch", _C_LABEL), (228, _ang(snap.get("pitch")), _C_IMU)])
+    _row(frame, x, yc + 95, [
+        (10, "    yaw", _C_LABEL), (95, _ang(snap.get("yaw")), _C_IMU)])
+
+
+def _draw_grove_card(frame, x, y, port_name, gp):
+    """Carte GROVE (bas-gauche) : 4 ultrasons (mm + barre) + IMU roll/pitch + bruts."""
+    present = bool(gp is not None and gp.connected)
+    fresh = bool(present and gp.ultra_age is not None and gp.ultra_age < 1.5)
+    ver = (gp.version if (gp and gp.version) else "") if present else ""
+    port = f"{port_name} {ver}".strip() if present else "absente"
+    yc = _card_frame(frame, x, y, 320, 122, "GROVE", port, present, fresh)
+
+    # --- ultrasons : 2x2, valeur mm (largeur fixe) + barre de proximite -------
+    ultra = gp.ultra if present else [None, None, None, None]
+    for i, d in enumerate(ultra):
+        cx = x + 10 + (i % 2) * 160
+        cy = yc + (i // 2) * 22
+        if d is None:
+            txt, col, fill = "  --", _C_OFF, 0
+        else:
+            f = max(0.0, min(1.0, (d - 300) / 1200.0))     # 0=proche 1=loin
+            col = (0, int(80 + 140 * f), int(220 - 140 * f))
+            txt = f"{d:4d}"
+            fill = int(46 * (1.0 - f))
+        _put(frame, cx, cy, f"S{i}", _C_LABEL)
+        _put(frame, cx + 28, cy, f"{txt}mm", col)
+        bx = cx + 100
+        cv2.rectangle(frame, (bx, cy - 9), (bx + 46, cy - 3), (60, 60, 60), 1)
+        if fill > 0:
+            cv2.rectangle(frame, (bx, cy - 9), (bx + fill, cy - 3), col, -1)
+
+    # --- IMU : roll/pitch fusionnes + accel/gyro bruts ------------------------
+    iy = yc + 48
+    roll = f"{gp.roll:+7.1f}" if (present and gp.roll is not None) else "     --"
+    pitch = f"{gp.pitch:+7.1f}" if (present and gp.pitch is not None) else "     --"
+    _row(frame, x, iy, [
+        (10, "IMU roll", _C_LABEL), (95, roll, _C_IMU),
+        (185, "pitch", _C_LABEL), (245, pitch, _C_IMU)])
+    a = ("%5d %5d %5d" % gp.accel) if (present and gp.accel is not None) else "--"
+    g = ("%5d %5d %5d" % gp.gyro) if (present and gp.gyro is not None) else "--"
+    _row(frame, x, iy + 19, [(10, "brut a", _C_LABEL), (72, a, _C_LABEL)])
+    _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
+
+
+def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
+    """Marqueurs LIES A L'IMAGE (detections, cible, reticule, point predit) — le HUD
+    texte de robot_control est remplace par les cartes v3, mais ces marqueurs
+    centraux (position visage) sont reutilises tels quels."""
+    locked = bool(tstate.get("locked"))
+    on_tracker = locked and tstate.get("src") == "track"
+    main_color = (255, 0, 255) if on_tracker else (255, 200, 0)
+    _overlay_detections(frame, faces, main, locked, main_color, tstate)
+    _overlay_main_marker(frame, main, nx, ny, area_pct)
+    _overlay_reticle(frame, pt, main, nx, ny)
+    _overlay_prediction(frame, tstate, main)
+
+
+# aide clavier sous forme de BOUTONS, regroupes en MATRICE par type. Chaque bouton
+# porte un index STABLE (voir _help_btn_for_key) ; il s'eclaire a la pression de sa
+# touche. Groupes = colonnes empilees, alignees en bas a gauche.
+_HELP_GROUPS = [
+    ("MOTION", [(0, "Z/S", "avance"), (1, "Q/D", "rotation"),
+                (2, "Espace", "STOP"), (9, "0-9", "vitesse")]),
+    ("SUIVI", [(3, "Fleches", "pan/tilt"), (4, "C", "centre"),
+               (5, "F", "suivi"), (6, "M", "detecteur"),
+               (7, "T", "tracker"), (8, "P", "prediction")]),
+    ("SYSTEME", [(11, "V", "cam"), (10, "Echap", "quitter")]),
+]
+_BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
+
+
+def _help_btn_for_key(key):
+    """Index du bouton d'aide correspondant a la touche `key` (code cv2), ou None.
+    Meme correspondance que _process_key (fleches + i/j/k/l = pan/tilt ; v = camera)."""
+    if key == 27:
+        return 10
+    if key == 32:
+        return 2
+    if key in KEYS_LEFT or key in KEYS_RIGHT or key in KEYS_UP or key in KEYS_DOWN:
+        return 3
+    k = key & 0xFF
+    c = chr(k).lower() if 32 <= k < 127 else ""
+    if c in ("z", "s"):
+        return 0
+    if c in ("q", "d"):
+        return 1
+    if c in ("i", "j", "k", "l"):
+        return 3
+    return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM}.get(
+        c, 9 if c.isdigit() else None)
+
+
+def _draw_help_matrix(frame, active, cam_src):
+    """Matrice de boutons d'aide (bas-gauche), groupee par type : chaque GROUPE est
+    une colonne (en-tete + boutons empiles, alignes en bas). Un bouton s'eclaircit
+    quand sa touche est pressee (`active` = index eclaires). Geometrie deterministe
+    -> stable, seule la couleur change. `cam_src` ('ext'/'int') annote le bouton V."""
+    fh = frame.shape[0]
+    x0, bottom = 8, fh - 8
+    sl, sd, sh = 0.45, 0.4, 0.4      # echelles libelle / description / en-tete
+    pad, lg, bh, vg, colgap = 8, 6, 20, 4, 10
+    s = bh + vg
+    x = x0
+    for header, btns in _HELP_GROUPS:
+        # largeur de colonne = plus large bouton du groupe
+        labels = []
+        colw = 0
+        for idx, key, desc in btns:
+            d = f"{desc} {cam_src}" if idx == _BTN_CAM else desc
+            (lw, _), _ = cv2.getTextSize(key, _FONT, sl, 2)
+            (dw, _), _ = cv2.getTextSize(d, _FONT, sd, 1)
+            labels.append((idx, key, d, lw))
+            colw = max(colw, lw + lg + dw + 2 * pad)
+        k = len(btns)
+        start_y = bottom - (k - 1) * s - bh
+        # en-tete du groupe
+        _put(frame, x + 1, start_y - 7, header, (140, 140, 140), sh, 1)
+        for i, (idx, key, d, lw) in enumerate(labels):
+            by = start_y + i * s
+            on = idx in active
+            roi = frame[by:by + bh, x:x + colw]
+            if roi.size:
+                fill = np.empty_like(roi)
+                fill[:] = (105, 105, 105) if on else (45, 45, 45)
+                a = 0.85 if on else 0.55
+                roi[:] = cv2.addWeighted(roi, 1.0 - a, fill, a, 0.0)
+            cv2.rectangle(frame, (x, by), (x + colw, by + bh),
+                          (170, 170, 170) if on else (75, 75, 75), 1)
+            ty = by + bh - 6
+            _put(frame, x + pad, ty, key, (255, 255, 255) if on else (215, 215, 215), sl, 2)
+            _put(frame, x + pad + lw + lg, ty, d,
+                 (185, 185, 185) if on else (160, 160, 160), sd, 1)
+        x += colw + colgap
+
+
+def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
+                    motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
+                    key_flash=None):
+    """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
+
+    CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
+    matrice de boutons). Positions/tailles FIXES : chaque carte reste a son coin que
+    son materiel soit present ou non (cadre grise + « -- »), rien ne se deplace.
+    `key_flash` = index de boutons a eclairer (touches recemment pressees)."""
+    fw, fh = frame.shape[1], frame.shape[0]
+    m = 8
+    _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps, tstate)
+    _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
+                   motion_on, smooth)
+    _draw_grove_card(frame, fw - 320 - m, fh - 122 - m, gp_port, gp)
+    _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"))
 
 
 class _ServoView:
@@ -88,6 +411,7 @@ class RobotControlCore:
         self.motion = None
         self.executor = None
         self.camera = self.tracking = self.servo = self.board = None
+        self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
 
         # --- etat de boucle cote Core (HMI/clavier/MCP), comme l'ancien app -----
@@ -102,6 +426,7 @@ class RobotControlCore:
         self._disp_n = 0
         self.disp_fps = 0.0
         self._hb_t0 = 0.0
+        self._btn_flash = {}         # index bouton d'aide -> date de derniere pression
 
     # -----------------------------------------------------------------------
     # Mise en place : telemetrie, liaison serie, nodes, executeur
@@ -123,17 +448,27 @@ class RobotControlCore:
         self.motion = RobotMotorDrive(self.link, maxPwm=args.max_pwm)
 
         # 3) nodes + executeur : en --board-only, seul BoardNode (ni cam ni suivi)
+        #    La carte capteurs GrovePi+ (ultrasons + IMU) est optionnelle et
+        #    tolerante a l'absence (reconnexion auto) : on l'ajoute sauf --no-grovepi.
         self.board = BoardNode(self.link)
         self.executor = Executor()
+        if not args.no_grovepi:
+            self.grovepi = GrovePiNode(port=args.grovepi_port, baud=args.baud,
+                                       telemetry=self.tel)
         if self.board_only:
             self.executor.add_node(self.board)
+            if self.grovepi is not None:
+                self.executor.add_node(self.grovepi)
         else:
             self.camera = CameraNode(args, telemetry=self.tel)
             self.tracking = TrackingNode(args, telemetry=self.tel)
             self.servo = ServoNode(args, self.link, telemetry=self.tel)
-            for node in (self.camera, self.tracking, self.servo, self.board):
+            nodes = [self.camera, self.tracking, self.servo, self.board]
+            if self.grovepi is not None:
+                nodes.append(self.grovepi)
+            for node in nodes:
                 self.executor.add_node(node)
-        self.executor.start()                    # ouvre camera + verifie detecteur + thread P2
+        self.executor.start()                    # ouvre camera (non fatal) + detecteur + P2
 
         # 4) config initiale du suivi + serveur de commandes MCP (socket loopback)
         if not self.board_only:
@@ -268,6 +603,10 @@ class RobotControlCore:
             cur = self.tracking.webcam.predict_mode
             i = PREDICT_MODES.index(cur) if cur in PREDICT_MODES else 0
             self._publish_cfg(predict_mode=PREDICT_MODES[(i + 1) % len(PREDICT_MODES)])
+        elif c == "v":                           # bascule camera interne <-> externe
+            if self.camera is not None:
+                self.camera.switch_camera()
+                self.tel.log("event", msg="camera_switch", source=self.camera.source)
         elif c == "j":
             self._publish_servo("nudge_pan", -SERVO_STEP)
         elif c == "l":
@@ -317,15 +656,18 @@ class RobotControlCore:
         print("En ecoute (board-only). Ctrl-C pour quitter.")
         self._hb_t0 = time.time()
         while True:
-            self.executor.spin_once()            # BoardNode : lit la telemetrie carte
+            self.executor.spin_once()            # BoardNode (+GrovePi) : lit la telemetrie
             self.server.drain()                  # execute les commandes carte MCP
             snap = _board_snap(self.executor.latest("/board/telemetry"))
+            gp = self.executor.latest("/grovepi/telemetry")
             now2 = time.time()
             if now2 - self._hb_t0 >= 2.0:
                 self._hb_t0 = now2
                 self.tel.log("heartbeat", connected=self.link.connected,
                              batt=snap.get("battery"), yaw=snap.get("yaw"),
-                             ok=snap.get("ok"), bad=snap.get("bad"))
+                             ok=snap.get("ok"), bad=snap.get("bad"),
+                             grove=None if gp is None else gp.connected,
+                             grove_ultra=None if gp is None else gp.ultra)
             time.sleep(0.02)
 
     def _loop(self):
@@ -337,28 +679,24 @@ class RobotControlCore:
         self._hb_t0 = now
 
         while True:
-            # 1) un tour de pipeline (les 4 nodes : set -> process -> get)
+            # 1) un tour de pipeline (les nodes : set -> process -> get)
             self.executor.spin_once()
 
-            # 2) garde d'echec camera (sur la DERNIERE lecture), comme l'ancien :
-            #    lecture ratee -> on saute ce tour ; 30 echecs consecutifs -> arret.
-            if not self.camera.ok:
-                if self.camera.read_fail > 30:
-                    print("Lecture camera echouee de facon repetee, arret.")
-                    break
-                time.sleep(0.005)
-                continue
+            # 2) support d'affichage : image camera si dispo, sinon TOILE NOIRE.
+            #    La camera est OPTIONNELLE : l'app tourne et affiche les capteurs
+            #    (GrovePi, STM32) meme sans camera, et la reprend a chaud si elle
+            #    revient (CameraNode reessaie l'ouverture en tache de fond).
             img = self.executor.latest("/camera/image")
-            if img is None or img.frame is None:
-                time.sleep(0.005)
-                continue
-            frame = img.frame
+            cam_ok = (self.camera.available and self.camera.ok
+                      and img is not None and img.frame is not None)
+            frame = img.frame if cam_ok else _blank_frame(self.camera.width, self.camera.height)
 
-            # 3) resultats sur le bus (traitement, metriques, servo, carte)
+            # 3) resultats sur le bus (traitement, metriques, servo, carte, capteurs)
             res = self.executor.latest("/tracking/result")
             met = self.executor.latest("/tracking/metrics") or TrackingMetrics()
             sstate = self.executor.latest("/servo/state") or ServoState(deadzone=self.args.deadzone)
             board = self.executor.latest("/board/telemetry")
+            gp = self.executor.latest("/grovepi/telemetry")
 
             # 4) cadence d'affichage
             self._disp_n += 1
@@ -382,15 +720,21 @@ class RobotControlCore:
             tstate = res.tstate if res is not None else {}
             snap = _board_snap(board)
             pt = _ServoView(sstate)
-            draw_overlay(frame, faces, main, nx, ny, area_pct, met.det_fps, self.disp_fps,
-                         self.active, pt, snap, self.motion_on,
-                         detector=met.detector, tstate=tstate)
+            # marqueurs centraux (position visage) reutilises de robot_control...
+            _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate)
+            # ...puis les 3 cartes materielles v3 (CAM / STM32 / GROVE) + aide clavier.
+            # boutons a eclairer = touches pressees dans les 300 ms (flash a la pression)
+            flash = {i for i, t in self._btn_flash.items() if now - t < 0.3}
+            _draw_hud_cards(frame, cam_ok, self.camera, self.link, self.args.port,
+                            self.args.grovepi_port, snap, pt, self.motion_on,
+                            not self.args.no_smooth, self.active, met, len(faces),
+                            self.disp_fps, tstate, gp, key_flash=flash)
             if not self.headless:
                 cv2.imshow(self.win, frame)      # fenetre coupee en --headless
             self.tel.snapshot(frame)
 
             # 7) heartbeat periodique
-            self._maybe_heartbeat(snap, tstate, met.det_fps, pt)
+            self._maybe_heartbeat(snap, tstate, met.det_fps, pt, gp)
 
             # 8) commandes MCP en file (config suivi + carte) -> thread principal
             self.server.drain()
@@ -399,18 +743,23 @@ class RobotControlCore:
             key = cv2.waitKeyEx(1) if not self.headless else -1
             moved_now = False
             if key != -1:
+                bi = _help_btn_for_key(key)          # eclaire le bouton d'aide pressé
+                if bi is not None:
+                    self._btn_flash[bi] = now
                 quit_now, moved_now = self._process_key(key, now)
                 if quit_now:
                     break
             if self.headless:
                 time.sleep(0.005)                # sans waitKey : evite la boucle folle
+            elif not cam_ok:
+                time.sleep(0.02)                 # sans camera : cap ~50 fps (evite 100% CPU)
             if self.moving and not moved_now and (now - self.last_move_ts) > MOVE_WATCHDOG_S:
                 if self.motion_on:
                     self.motion.stop()
                 self.moving = False
 
-    def _maybe_heartbeat(self, snap, tstate, det_fps, pt):
-        """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi)."""
+    def _maybe_heartbeat(self, snap, tstate, det_fps, pt, gp=None):
+        """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi, capteurs)."""
         now2 = time.time()
         if now2 - self._hb_t0 < 2.0:
             return
@@ -425,7 +774,11 @@ class RobotControlCore:
                      trk=tstate.get("mode"), locked=tstate.get("locked"),
                      src=tstate.get("src"),
                      score=None if hb_score is None else round(hb_score, 3),
-                     step_max=round(ms.get("step_max", 0.0), 2) if ms else 0.0)
+                     step_max=round(ms.get("step_max", 0.0), 2) if ms else 0.0,
+                     grove=None if gp is None else gp.connected,
+                     grove_ultra=None if gp is None else gp.ultra,
+                     grove_roll=None if gp is None else gp.roll,
+                     grove_pitch=None if gp is None else gp.pitch)
 
     def _shutdown(self):
         """Arret propre : serveur MCP, moteurs coupes, nodes/camera, journaux."""
@@ -449,8 +802,9 @@ class RobotControlCore:
 def _board_snap(board):
     """BoardTelemetry (topic) -> dict attendu par les helpers d'overlay/heartbeat."""
     if board is None:
-        return {"battery": None, "yaw": None, "ok": 0, "bad": 0}
-    return {"battery": board.battery, "yaw": board.yaw, "ok": board.ok, "bad": board.bad}
+        return {"battery": None, "yaw": None, "roll": None, "pitch": None, "ok": 0, "bad": 0}
+    return {"battery": board.battery, "yaw": board.yaw, "roll": board.roll,
+            "pitch": board.pitch, "ok": board.ok, "bad": board.bad}
 
 
 def main():

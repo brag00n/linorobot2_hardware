@@ -80,6 +80,12 @@ def parse_args():
     ap = argparse.ArgumentParser(description="Controle Bamboo v4 : teleop + suivi visage")
     ap.add_argument("--port", default="COM4", help="port serie carte STM32 (defaut COM4)")
     ap.add_argument("--baud", type=int, default=115200)
+    # --- carte capteurs GrovePi+ (utilisee par robot_controlv3 ; ignoree ici) ---
+    ap.add_argument("--grovepi-port", default="COM6",
+                    help="port serie carte capteurs GrovePi+ (defaut COM6 ; scan "
+                         "auto si absent). Utilise par robot_controlv3")
+    ap.add_argument("--no-grovepi", action="store_true",
+                    help="ne pas connecter la carte capteurs GrovePi+ (robot_controlv3)")
     ap.add_argument("--index", default="auto",
                     help="index camera USB, ou 'auto' pour scanner (defaut auto)")
     ap.add_argument("--camera-name", default="USB",

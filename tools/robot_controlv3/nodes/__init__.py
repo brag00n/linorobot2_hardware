@@ -8,5 +8,6 @@ from .CameraNode import CameraNode
 from .TrackingNode import TrackingNode
 from .ServoNode import ServoNode
 from .BoardNode import BoardNode
+from .GrovePiNode import GrovePiNode
 
-__all__ = ["CameraNode", "TrackingNode", "ServoNode", "BoardNode"]
+__all__ = ["CameraNode", "TrackingNode", "ServoNode", "BoardNode", "GrovePiNode"]

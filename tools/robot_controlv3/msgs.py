@@ -12,6 +12,7 @@ Graphe des topics (voir RobotMain) :
   /servo/cmd         ServoCmd        Tracking + Core -> Servo  (cible ou pilotage manuel)
   /servo/state       ServoState      Servo   -> Core          (angles + fluidite)
   /board/telemetry   BoardTelemetry  Board   -> Core          (batterie, yaw, liaison)
+  /grovepi/telemetry GrovePiTelemetry GrovePi -> Core          (ultrasons + IMU, liaison)
 """
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple, List
@@ -89,12 +90,42 @@ class ServoState:
 
 @dataclass
 class BoardTelemetry:
-    """Snapshot carte STM32 (liaison serie) : batterie, cap, vitesses, liaison."""
+    """Snapshot carte STM32 (liaison serie) : batterie, IMU (roll/pitch/yaw), vitesses, liaison."""
     battery: Optional[float] = None
     yaw: Optional[float] = None
+    roll: Optional[float] = None
+    pitch: Optional[float] = None
     vx: float = 0.0
     vy: float = 0.0
     vz: float = 0.0
     encoders: Optional[list] = None
+    ok: int = 0
+    bad: int = 0
+
+
+@dataclass
+class GrovePiTelemetry:
+    """Snapshot carte capteurs GrovePi+ : ultrasons + IMU + liaison.
+
+    `connected` = port serie ouvert (la carte peut etre absente : l'app tourne
+    quand meme). Les champs `*_age` (s depuis la derniere trame de la famille)
+    permettent a l'HMI de distinguer « connecte mais silencieux » de « frais ».
+    ultra : 4 distances mm (None = pas d'echo / canal muet).
+    """
+    connected: bool = False
+    version: Optional[str] = None
+    # IMU (fusion bord : roll/pitch en deg ; accel/gyro bruts int16)
+    roll: Optional[float] = None
+    pitch: Optional[float] = None
+    accel: Optional[Tuple[int, int, int]] = None
+    gyro: Optional[Tuple[int, int, int]] = None
+    imu_age: Optional[float] = None
+    # Ultrasons HC-SR04 (mm, None = pas d'echo)
+    ultra: List[Optional[int]] = field(default_factory=lambda: [None, None, None, None])
+    ultra_age: Optional[float] = None
+    # Telemetre IR Sharp
+    ir_dist: Optional[int] = None
+    ir_adc: Optional[int] = None
+    ir_age: Optional[float] = None
     ok: int = 0
     bad: int = 0
