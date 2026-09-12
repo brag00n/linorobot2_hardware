@@ -44,8 +44,9 @@ class RobotWebCamMotorized:
                  detector="haar", conf=0.5,
                  dnn_proto=None, dnn_model=None, yunet_model=None,
                  track_mode="auto", vit_model=None,
-                 redetect_ms=400, score_min=0.30, hold_ms=3000,
+                 redetect_ms=400, score_min=0.30, hold_ms=5000,
                  iou_reanchor=0.20, max_area_frac=0.5, max_grow=3.0,
+                 hold_score_min=0.60, max_det_misses=8,
                  predict_mode="anticip", predict_ms=700,
                  predict_lead_ms=120, predict_min_speed=0.4):
         self._servo = servo               # RobotServoMotor asservi (pan/tilt)
@@ -60,7 +61,8 @@ class RobotWebCamMotorized:
             track_mode=track_mode, vit_model=vit_model,
             redetect_ms=redetect_ms, score_min=score_min, hold_ms=hold_ms,
             iou_reanchor=iou_reanchor, max_area_frac=max_area_frac,
-            max_grow=max_grow)
+            max_grow=max_grow, hold_score_min=hold_score_min,
+            max_det_misses=max_det_misses)
 
         # --- prediction de trajectoire (coast + anticipation) -----------------
         self.predict_mode = (predict_mode if predict_mode in PREDICT_MODES
@@ -157,6 +159,7 @@ class RobotWebCamMotorized:
         return {"mode": st["mode"], "locked": st["locked"], "src": st["src"],
                 "score": st["score"], "raw_det": st["raw_det"],
                 "raw_box": raw_box, "unlock_reason": st["unlock_reason"],
+                "lock_id": st["lock_id"], "lock_age": st["lock_age"],
                 "predict": self._predict_phase, "predict_mode": self.predict_mode,
                 "pred_speed": self._pred_speed, "pred_err": self._pred_err,
                 "pred_nx": pred_nx, "pred_ny": pred_ny}

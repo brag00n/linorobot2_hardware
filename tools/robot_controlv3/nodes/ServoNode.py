@@ -27,10 +27,17 @@ class ServoNode(Node):
 
     def __init__(self, args, link, telemetry=None):
         super().__init__("servo")
+        # aspect h/w du cadre : surface morte CARREE a l'ecran (cf RobotServoMotor)
+        try:
+            w, h = (int(v) for v in args.size.lower().split("x"))
+            aspect = h / float(w)
+        except (ValueError, ZeroDivisionError):
+            aspect = 1.0
         self.servo = RobotServoMotor(
             link, panGain=args.pan_gain, tiltGain=args.tilt_gain,
             invertPan=args.invert_pan, invertTilt=args.invert_tilt,
             deadzone=args.deadzone, deadHyst=args.dead_hyst, maxStep=args.max_step,
+            aspect=aspect,
             panMin=args.pan_min, panMax=args.pan_max, panHome=args.pan_home,
             tiltMin=args.tilt_min, tiltMax=args.tilt_max, tiltHome=args.tilt_home,
             maxVel=args.max_vel, maxAccel=args.max_accel, smooth=not args.no_smooth,

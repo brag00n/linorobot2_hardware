@@ -57,7 +57,8 @@ class TrackingNode(Node):
             track_mode=args.track_mode, vit_model=args.vit_model,
             redetect_ms=args.redetect_ms, score_min=args.track_score_min,
             hold_ms=args.track_hold_ms, max_area_frac=args.track_max_area,
-            max_grow=args.track_max_grow, predict_mode=args.predict_mode,
+            max_grow=args.track_max_grow, hold_score_min=args.track_hold_score_min,
+            max_det_misses=args.track_max_misses, predict_mode=args.predict_mode,
             predict_ms=args.predict_ms, predict_lead_ms=args.predict_lead_ms,
             predict_min_speed=args.predict_min_speed)
         self.active = False            # suivi arme (pilote par /tracking/config)

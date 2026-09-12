@@ -120,8 +120,9 @@ class FaceDetection:
                  detector="haar", conf=0.5,
                  dnn_proto=None, dnn_model=None, yunet_model=None,
                  track_mode="auto", vit_model=None,
-                 redetect_ms=400, score_min=0.30, hold_ms=3000,
-                 iou_reanchor=0.20, max_area_frac=0.5, max_grow=3.0):
+                 redetect_ms=400, score_min=0.30, hold_ms=5000,
+                 iou_reanchor=0.20, max_area_frac=0.5, max_grow=3.0,
+                 hold_score_min=0.60, max_det_misses=8):
         self.det_width = det_width
         self.min_size = min_size
         self.scale_factor = scale_factor
@@ -138,6 +139,14 @@ class FaceDetection:
         self.redetect_ms = redetect_ms    # periode de re-detection pendant le lock
         self.score_min = score_min        # seuil de perte (Vit) -> re-acquisition
         self.hold_ms = hold_ms            # duree max de HOLD sans reconfirmation detecteur
+        # HOLD prolonge si le tracker reste TRES confiant (score >= hold_score_min) :
+        # on tolere un depassement de hold_ms tant que le suivi est sur de lui (profil).
+        self.hold_score_min = hold_score_min
+        # SECURITE anti-derive : un score tracker haut ne prouve pas que la box est
+        # encore un VISAGE (elle peut avoir glisse sur un autre objet). Si le detecteur
+        # ne (re)confirme AUCUN visage sur `max_det_misses` cycles de re-detection
+        # CONSECUTIFS, on relache quel que soit le score.
+        self.max_det_misses = int(max_det_misses)
         self.iou_reanchor = iou_reanchor  # recouvrement mini pour re-ancrer sur une detection
         self.max_area_frac = max_area_frac  # aire max de la box suivie (fraction du cadre)
         self.max_grow = max_grow          # facteur de grossissement max depuis l'ancrage
@@ -145,10 +154,18 @@ class FaceDetection:
         self._trk = None                  # instance tracker OpenCV courante
         self._locked = False              # cible verrouillee ?
         self._lock_src = "off"            # off|detect|track|reanchor|redetect
+        # duree de vie du verrou courant : identite d'EPISODE de suivi (meme
+        # cible/personne, conservee a travers redetect/reanchor/track, remise a zero
+        # seulement sur perte reelle = _resetLock). _lock_id incremente a CHAQUE
+        # nouvel episode (unlocked->locked) : sert de HANDLE pour attacher une
+        # reconnaissance (episode N -> personne X) ; _lock_t0 = t de debut d'episode.
+        self._lock_id = 0                 # compteur d'episodes (0 = jamais verrouille)
+        self._lock_t0 = None              # t (time.time) du debut de l'episode courant
         self._track_score = None          # dernier score de suivi (Vit)
         self._ref_area = 0.0              # aire (small) de la box a l'ancrage (anti-grossissement)
         self._last_redetect = 0.0         # t derniere re-detection pendant le lock
         self._last_confirm = 0.0          # t derniere confirmation detecteur (lock/reanchor)
+        self._miss_streak = 0             # cycles de re-detection CONSECUTIFS sans visage
         self._pending_track = None        # bascule tracker demandee a chaud
         # instrumentation : hit/miss BRUT du detecteur pendant le lock (gain profil mesurable)
         self._raw_det = None              # dernier resultat detecteur brut pendant lock (True/False/None)
@@ -254,11 +271,17 @@ class FaceDetection:
         raw_det : le detecteur a-t-il vu un visage au dernier cycle de re-detection
         pendant le lock (True/False/None) -> mesure du gain profil du tracker.
         raw_box : cette detection brute (coords small ; l'orchestrateur remappe).
+        lock_id : identifiant de l'EPISODE de suivi courant (0 si non verrouille) ;
+        lock_age : duree de vie de cet episode en s (0.0 si non verrouille). Ces
+        deux champs servent de critere/handle pour une reconnaissance de personne.
         """
+        age = (time.time() - self._lock_t0) if (self._locked and self._lock_t0) else 0.0
         return {"mode": self._track_mode, "locked": self._locked,
                 "src": self._lock_src, "score": self._track_score,
                 "raw_det": self._raw_det, "raw_box": self._raw_det_box,
-                "unlock_reason": self._unlock_reason}
+                "unlock_reason": self._unlock_reason,
+                "lock_id": self._lock_id if self._locked else 0,
+                "lock_age": age}
 
     # --- tracker visuel : instanciation / (re)init / reset ------------------
     def _makeTracker(self, mode):
@@ -292,6 +315,8 @@ class FaceDetection:
         self._ref_area = 0.0
         self._raw_det = None
         self._raw_det_box = None
+        self._lock_t0 = None              # fin d'episode : la duree de vie repart a 0
+        self._miss_streak = 0             # nouvel episode : compteur d'echecs remis a zero
 
     # --- detecteurs : chacun rend une liste de (x,y,w,h) en coords de small ----
     def buildImpl(self):
@@ -429,6 +454,10 @@ class FaceDetection:
                 self._lock_src = "detect"
                 self._last_confirm = now
                 self._last_redetect = now
+                # nouvel EPISODE : seule transition unlocked->locked (le redetect en
+                # branche LOCKED conserve l'episode = meme personne). Nouvel id + t0.
+                self._lock_id += 1
+                self._lock_t0 = now
                 return main_s, [main_s]
             self._lock_src = "off"
             self._track_score = None
@@ -469,6 +498,9 @@ class FaceDetection:
             self._last_redetect = now
             self._raw_det = det_main is not None      # instrumentation hit/miss brut
             self._raw_det_box = det_main
+            # compteur d'echecs detecteur CONSECUTIFS (remis a zero des qu'un visage
+            # est (re)vu) -> alimente la securite anti-derive plus bas.
+            self._miss_streak = 0 if det_main is not None else self._miss_streak + 1
 
         if lost:
             if det_main is not None and self._initTracker(small, det_main):
@@ -489,11 +521,26 @@ class FaceDetection:
                 self._lock_src = "recenter" if far else "reanchor"
                 self._last_confirm = now
                 return det_main, [det_main]
-        # detecteur muet mais tracker tient (profil) : HOLD borne par hold_ms
-        if do_redetect and det_main is None and \
-                (now - self._last_confirm) * 1000.0 > self.hold_ms:
-            self._unlock_reason = "hold_timeout"
-            self._resetLock()
-            return None, []
+        # detecteur muet mais tracker tient (profil) : decision de maintien.
+        if do_redetect and det_main is None:
+            # SECURITE anti-derive (PRIORITAIRE) : le detecteur n'a (re)vu aucun
+            # visage sur max_det_misses cycles consecutifs -> la box n'est
+            # probablement plus un visage (glissee sur un autre objet). On relache
+            # MEME si le score tracker est haut (un score haut ne prouve pas visage).
+            if self._miss_streak >= self.max_det_misses:
+                self._unlock_reason = "det_miss"
+                self._resetLock()
+                return None, []
+            # HOLD borne par hold_ms, SAUF si le tracker reste TRES confiant
+            # (score >= hold_score_min) : on prolonge le suivi de profil. Ce sursis
+            # reste borne par la securite ci-dessus (il ne peut pas trop durer).
+            expired = (now - self._last_confirm) * 1000.0 > self.hold_ms
+            confident = score is not None and score >= self.hold_score_min
+            if expired and not confident:
+                self._unlock_reason = "hold_timeout"
+                self._resetLock()
+                return None, []
+            # sinon : sursis (pas encore expire, ou tracker confiant) -> on garde
+            # le suivi et on retourne la box du tracker (fall-through ci-dessous).
         self._lock_src = "track"
         return box, [box]

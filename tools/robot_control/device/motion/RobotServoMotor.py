@@ -17,7 +17,7 @@ class RobotServoMotor:
     def __init__(self, link, panId=1, tiltId=2,
                  panGain=18.0, tiltGain=10.0,
                  invertPan=False, invertTilt=False,
-                 deadzone=0.08, deadHyst=0.05, maxStep=6,
+                 deadzone=0.08, deadHyst=0.05, maxStep=6, aspect=1.0,
                  panMin=17.0, panMax=178.0, panHome=88.0,
                  tiltMin=20.0, tiltMax=70.0, tiltHome=42.0,
                  maxVel=120.0, maxAccel=400.0, smooth=True,
@@ -39,9 +39,15 @@ class RobotServoMotor:
         self.tiltGain = tiltGain
         self.sgnPan = -1.0 if invertPan else 1.0
         self.sgnTilt = -1.0 if invertTilt else 1.0
-        # Zone morte = demi-cote de la SURFACE centrale (rectangle) : dans cette
-        # boite, on ne bouge pas (cible = surface, pas un point -> evite le hunting).
+        # Zone morte = demi-cote de la SURFACE centrale visee : dans cette boite, on
+        # ne bouge pas (cible = surface, pas un point -> evite le hunting). nx/ny sont
+        # normalises PAR AXE ([-1,+1] sur largeur / hauteur) : un meme seuil scalaire
+        # donne une boite CARREE en normalise mais RECTANGULAIRE en pixels (cadre 16:9
+        # plus large que haut). `aspect` = h/w du cadre : on l'applique a l'axe pan
+        # (horizontal) pour que la surface soit un CARRE a l'ecran (inscrit dans la
+        # hauteur). aspect=1.0 (defaut) = ancien comportement (boite rectangulaire).
         self.deadzone = deadzone
+        self.aspect = float(aspect)
         # Hysteresis : une fois stabilise DANS la boite, il faut sortir de la boite
         # elargie (deadzone + deadHyst) pour re-enclencher -> supprime le chatter de bord.
         self.deadHyst = deadHyst
@@ -156,12 +162,12 @@ class RobotServoMotor:
 
         nx > 0 : visage a DROITE de l'image ; ny > 0 : visage en BAS.
         Ne bouge PAS le servo directement : pose une cible que le lisseur (slew)
-        rejoint en douceur. La cible n'est pas le point central mais un RECTANGLE
-        central (demi-cote = deadzone) : tant que le visage y est, la cible = la
+        rejoint en douceur. La cible n'est pas le point central mais une SURFACE
+        centrale (demi-cote = deadzone, carree a l'ecran) : tant que le visage y est, la cible = la
         position courante (arret). Anti-oscillation (inchange) :
-          - erreur ATTENUEE : on ne vise que la part d'erreur au-dela du rectangle,
+          - erreur ATTENUEE : on ne vise que la part d'erreur au-dela de la surface,
             donc la correction tend vers 0 au bord (pas de depassement du centre) ;
-          - HYSTERESIS : stabilise dans le rectangle, il faut ressortir de la boite
+          - HYSTERESIS : stabilise dans la surface, il faut ressortir de la boite
             elargie (deadzone + deadHyst) pour re-enclencher.
         En mode non lisse (smooth=False), applique le pas immediatement (ancien
         comportement) pour comparaison.
@@ -178,7 +184,9 @@ class RobotServoMotor:
         else:
             gain, sgn = self.tiltGain, self.sgnTilt
             before = self.angleV
-        dz = self.deadzone
+        # demi-cote de la surface centrale sur cet axe : pan (horizontal) resserre
+        # par `aspect` pour une surface CARREE a l'ecran ; tilt (vertical) = reference.
+        dz = self.deadzone * self.aspect if axis == "pan" else self.deadzone
         # seuil d'engagement : boite elargie si deja stabilise (hysteresis)
         thresh = dz + self.deadHyst if self._settled[axis] else dz
         if abs(e) <= thresh:

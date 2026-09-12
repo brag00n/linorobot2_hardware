@@ -70,6 +70,14 @@ KEYS_UP = {2490368, 65362, 0x260000, 38, 63232}
 KEYS_RIGHT = {2555904, 65363, 0x270000, 39, 63235}
 KEYS_DOWN = {2621440, 65364, 0x280000, 40, 63233}
 SERVO_STEP = 2                # deg par appui fleche (reglage cam manuel)
+# Reglage LIVE de la taille de la surface cible (demi-cote normalise), touches +/-
+TARGET_STEP = 0.01            # pas d'ajustement par appui
+TARGET_MIN, TARGET_MAX = 0.03, 0.45   # bornes (evite surface nulle ou quasi plein cadre)
+
+
+def clamp_target(size):
+    """Borne une taille de surface cible dans [TARGET_MIN, TARGET_MAX]."""
+    return max(TARGET_MIN, min(TARGET_MAX, size))
 
 
 # ===========================================================================
@@ -117,8 +125,15 @@ def parse_args():
                     help="periode de re-detection pendant le verrou (re-ancrage/anti-derive)")
     ap.add_argument("--track-score-min", type=float, default=0.30,
                     help="score de suivi (Vit) sous lequel la cible est perdue -> re-acquisition")
-    ap.add_argument("--track-hold-ms", type=float, default=3000.0,
+    ap.add_argument("--track-hold-ms", type=float, default=5000.0,
                     help="duree max de suivi sans reconfirmation detecteur (profil) avant relache")
+    ap.add_argument("--track-hold-score-min", type=float, default=0.60,
+                    help="score tracker au-dela duquel le HOLD est prolonge malgre hold_ms "
+                         "(suivi de profil confiant ; borne par --track-max-misses)")
+    ap.add_argument("--track-max-misses", type=int, default=8,
+                    help="cycles de re-detection consecutifs SANS visage avant relache "
+                         "force, meme si le score tracker est haut (securite anti-derive ; "
+                         "~max_misses x redetect_ms de suivi aveugle max)")
     ap.add_argument("--track-max-area", type=float, default=0.5,
                     help="aire max de la box suivie (fraction du cadre) avant perte (anti-grossissement)")
     ap.add_argument("--track-max-grow", type=float, default=3.0,
@@ -143,8 +158,13 @@ def parse_args():
     ap.add_argument("--pan-gain", type=float, default=10.0)
     ap.add_argument("--tilt-gain", type=float, default=6.0)
     ap.add_argument("--deadzone", type=float, default=0.14,
-                    help="demi-cote de la SURFACE centrale visee (rectangle) : "
-                         "tant que le visage y est, aucune correction (anti-oscillation)")
+                    help="demi-cote de la SURFACE centrale visee (carree a l'ecran, "
+                         "reference hauteur) : tant que le visage y est, aucune "
+                         "correction (anti-oscillation)")
+    ap.add_argument("--target-size", type=float, default=None,
+                    help="taille (demi-cote normalise) de la SURFACE cible carree. "
+                         "Prioritaire sur --deadzone s'il est fourni. Ajustable en "
+                         "direct par les touches +/- (0.03..0.45)")
     ap.add_argument("--dead-hyst", type=float, default=0.05,
                     help="marge d'hysteresis : une fois stabilise dans la surface, "
                          "il faut ressortir de (deadzone+marge) pour re-enclencher")
@@ -184,7 +204,12 @@ def parse_args():
     ap.add_argument("--board-only", action="store_true",
                     help="pur pilote COM4 : ni camera ni suivi, seulement liaison "
                          "serie + telemetrie carte + serveur MCP (force --headless)")
-    return ap.parse_args()
+    args = ap.parse_args()
+    # --target-size est l'alias explicite (et prioritaire) de la taille de surface :
+    # une seule source de verite en aval (deadzone), pour les deux apps et le dessin.
+    if args.target_size is not None:
+        args.deadzone = args.target_size
+    return args
 
 
 # ===========================================================================
@@ -215,13 +240,24 @@ def _overlay_detections(frame, faces, main, locked, main_color, tstate):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
 
 
-def _overlay_main_marker(frame, main, nx, ny, area_pct):
-    """Marque le centre du visage principal (point rouge) + nx/ny/aire au-dessus."""
+def _overlay_main_marker(frame, main, nx, ny, area_pct, tstate=None):
+    """Marque le centre du visage principal (point rouge) + nx/ny/aire au-dessus.
+
+    Si tstate est fourni et la cible verrouillee, ajoute AU-DESSUS de nx/ny (meme
+    style que le suivi) l'identite d'episode `id #N` et sa duree de vie, en ROSE :
+    handle + critere pour une reconnaissance de personne.
+    """
     if main is None:
         return
     x, y, w, h = main
     cx, cy = int(x + w / 2), int(y + h / 2)
     cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+    if tstate is not None and tstate.get("locked"):
+        lid = tstate.get("lock_id") or 0
+        age = tstate.get("lock_age") or 0.0
+        cv2.putText(frame, f"id #{lid}  {age:.1f}s",
+                    (x, max(0, y - 28)), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (147, 20, 255), 2)   # rose (DeepPink en BGR)
     cv2.putText(frame, f"nx={nx:+.2f} ny={ny:+.2f} aire={area_pct:.1f}%",
                 (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
@@ -235,10 +271,14 @@ def _overlay_reticle(frame, pt, main, nx, ny):
     fh, fw = frame.shape[:2]
     cv2.line(frame, (fw // 2, 0), (fw // 2, fh), (80, 80, 80), 1)
     cv2.line(frame, (0, fh // 2), (fw, fh // 2), (80, 80, 80), 1)
-    dzx = int(pt.deadzone * fw / 2.0)
-    dzy = int(pt.deadzone * fh / 2.0)
+    # Surface CARREE a l'ecran : demi-cote commun (px) inscrit dans la hauteur.
+    # nx/ny etant normalises par axe, le seuil horizontal est resserre par h/w
+    # (= pt.aspect) pour que la boite dessinee et la zone morte reelle coincident.
+    half = int(pt.deadzone * fh / 2.0)
+    dzx = dzy = half
+    asp = fh / float(fw) if fw else 1.0
     in_zone = (main is not None and nx is not None
-               and abs(nx) <= pt.deadzone and abs(ny) <= pt.deadzone)
+               and abs(nx) <= pt.deadzone * asp and abs(ny) <= pt.deadzone)
     zc = (0, 200, 0) if in_zone else (0, 165, 255)
     cv2.rectangle(frame, (fw // 2 - dzx, fh // 2 - dzy),
                   (fw // 2 + dzx, fh // 2 + dzy), zc, 1)
@@ -342,7 +382,7 @@ def draw_overlay(frame, faces, main, nx, ny, area_pct, det_fps, disp_fps,
     main_color = (255, 0, 255) if on_tracker else (255, 200, 0)
 
     _overlay_detections(frame, faces, main, locked, main_color, tstate)
-    _overlay_main_marker(frame, main, nx, ny, area_pct)
+    _overlay_main_marker(frame, main, nx, ny, area_pct, tstate)
     _overlay_reticle(frame, pt, main, nx, ny)
     _overlay_prediction(frame, tstate, main)
     _overlay_hud(frame, faces, detector, tracking, pt, snap, motion_on,
@@ -435,6 +475,7 @@ class RobotControlApp:
                 self.link, panGain=args.pan_gain, tiltGain=args.tilt_gain,
                 invertPan=args.invert_pan, invertTilt=args.invert_tilt,
                 deadzone=args.deadzone, deadHyst=args.dead_hyst, maxStep=args.max_step,
+                aspect=self.h / float(self.w),   # surface morte carree a l'ecran
                 panMin=args.pan_min, panMax=args.pan_max, panHome=args.pan_home,
                 tiltMin=args.tilt_min, tiltMax=args.tilt_max, tiltHome=args.tilt_home,
                 maxVel=args.max_vel, maxAccel=args.max_accel, smooth=not args.no_smooth,
@@ -445,7 +486,8 @@ class RobotControlApp:
                 track_mode=args.track_mode, vit_model=args.vit_model,
                 redetect_ms=args.redetect_ms, score_min=args.track_score_min,
                 hold_ms=args.track_hold_ms, max_area_frac=args.track_max_area,
-                max_grow=args.track_max_grow, predict_mode=args.predict_mode,
+                max_grow=args.track_max_grow, hold_score_min=args.track_hold_score_min,
+                max_det_misses=args.track_max_misses, predict_mode=args.predict_mode,
                 predict_ms=args.predict_ms, predict_lead_ms=args.predict_lead_ms,
                 predict_min_speed=args.predict_min_speed)
             self._init_perception()              # ready detecteur + tracker, ou sortie
@@ -595,6 +637,8 @@ class RobotControlApp:
                      locked=tstate.get("locked"), src=tstate.get("src"),
                      raw_det=tstate.get("raw_det"),
                      score=None if score is None else round(score, 3),
+                     lock_id=tstate.get("lock_id"),
+                     lock_age=round(tstate.get("lock_age", 0.0), 2),
                      predict=tstate.get("predict"),
                      pred_speed=None if pspeed is None else round(pspeed, 3),
                      pred_err=None if perr is None else round(perr, 4))
@@ -604,6 +648,8 @@ class RobotControlApp:
             self.tel.log("event", msg="track_unlock" if unlocked else "track_lock",
                          src=tstate.get("src"),
                          reason=tstate.get("unlock_reason") if unlocked else None,
+                         lock_id=tstate.get("lock_id"),
+                         lock_age=round(tstate.get("lock_age", 0.0), 2),
                          score=None if score is None else round(score, 3))
             self.last_locked = tstate.get("locked")
         # asservissement du servo vers la cible courante (delegue au subsystem :
@@ -666,6 +712,11 @@ class RobotControlApp:
             self.pt.nudgeTilt(+SERVO_STEP)
         elif c == "k":
             self.pt.nudgeTilt(-SERVO_STEP)
+        # --- taille de la surface cible (carree) : +/- (= accepte comme +) ---
+        elif c in ("+", "="):
+            self._resize_target(+TARGET_STEP)
+        elif c == "-":
+            self._resize_target(-TARGET_STEP)
         # --- vitesse ---
         elif c.isdigit():
             self.motion.setSpeed(int(c))
@@ -689,6 +740,15 @@ class RobotControlApp:
             self.last_move_ts = now
             return False, True
         return False, False
+
+    def _resize_target(self, delta):
+        """Ajuste en direct la taille de la surface cible (demi-cote), bornee.
+        Le dessin (reticule) lit pt.deadzone -> mise a jour immediate a l'ecran."""
+        pt = getattr(self, "pt", None)
+        if pt is None:                           # --board-only : pas de servo
+            return
+        pt.deadzone = clamp_target(pt.deadzone + delta)
+        self.tel.log("event", msg="target_size", size=round(pt.deadzone, 3))
 
     # -----------------------------------------------------------------------
     # Boucle principale P1 + arret

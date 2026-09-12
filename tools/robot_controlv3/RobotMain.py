@@ -44,6 +44,7 @@ from robot_control.RobotMain import (
     parse_args,
     _overlay_detections, _overlay_main_marker, _overlay_reticle, _overlay_prediction,
     MOVE_WATCHDOG_S, KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN, SERVO_STEP,
+    TARGET_STEP, clamp_target,
 )
 from robot_control.lib.Telemetry import Telemetry
 from robot_control.communication.RobotComSerial import RobotComSerial
@@ -89,6 +90,10 @@ _C_OFF = (120, 120, 120)          # etat inactif / absent
 _C_WARN = (0, 165, 255)           # orange (soutenu / silencieux)
 _C_BAD = (0, 0, 255)              # rouge (coup de butoir)
 _C_IMU = (0, 255, 255)            # cyan (IMU)
+
+# duree de vie d'episode (s) au-dela de laquelle le verrou est juge assez STABLE
+# pour declencher une reconnaissance de personne (age vire au vert dans la carte CAM).
+_LOCK_STABLE_S = 2.0
 
 
 def _put(frame, x, y, text, col, scale=0.45, thick=1):
@@ -156,7 +161,7 @@ def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps, t
         port = f"idx{idx} {camnode.width}x{camnode.height}"
     else:
         port = "absente"
-    yc = _card_frame(frame, x, y, 320, 141, "CAM", port, present, active)
+    yc = _card_frame(frame, x, y, 320, 160, "CAM", port, present, active)
 
     locked = bool(tstate.get("locked"))
     src = tstate.get("src")
@@ -191,6 +196,18 @@ def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps, t
             (230, "err", _C_LABEL), (272, f"{err:.3f}" if err is not None else "--", _C_VAL)])
     else:
         _row(frame, x, yc + 76, [(10, "pred", _C_LABEL), (78, "off", _C_OFF)])
+
+    # episode de suivi : id (handle pour une reconnaissance) + duree de vie (critere).
+    # Age vire au vert au-dela d'un seuil = episode assez stable pour identifier.
+    if locked:
+        lid = tstate.get("lock_id") or 0
+        age = tstate.get("lock_age") or 0.0
+        _row(frame, x, yc + 95, [
+            (10, "id", _C_LABEL), (48, f"#{lid}", _C_VAL),
+            (110, "age", _C_LABEL),
+            (150, f"{age:5.1f}s", _C_ON if age >= _LOCK_STABLE_S else _C_VAL)])
+    else:
+        _row(frame, x, yc + 95, [(10, "id", _C_LABEL), (48, "--", _C_OFF)])
 
 
 def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth):
@@ -276,7 +293,7 @@ def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
     on_tracker = locked and tstate.get("src") == "track"
     main_color = (255, 0, 255) if on_tracker else (255, 200, 0)
     _overlay_detections(frame, faces, main, locked, main_color, tstate)
-    _overlay_main_marker(frame, main, nx, ny, area_pct)
+    _overlay_main_marker(frame, main, nx, ny, area_pct, tstate)
     _overlay_reticle(frame, pt, main, nx, ny)
     _overlay_prediction(frame, tstate, main)
 
@@ -290,9 +307,10 @@ _HELP_GROUPS = [
     ("SUIVI", [(3, "Fleches", "pan/tilt"), (4, "C", "centre"),
                (5, "F", "suivi"), (6, "M", "detecteur"),
                (7, "T", "tracker"), (8, "P", "prediction")]),
-    ("SYSTEME", [(11, "V", "cam"), (10, "Echap", "quitter")]),
+    ("SYSTEME", [(11, "V", "cam"), (12, "+/-", "cible"), (10, "Echap", "quitter")]),
 ]
 _BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
+_BTN_TARGET = 12                     # index du bouton taille de surface cible (+/-)
 
 
 def _help_btn_for_key(key):
@@ -312,11 +330,13 @@ def _help_btn_for_key(key):
         return 1
     if c in ("i", "j", "k", "l"):
         return 3
+    if c in ("+", "=", "-"):
+        return _BTN_TARGET
     return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM}.get(
         c, 9 if c.isdigit() else None)
 
 
-def _draw_help_matrix(frame, active, cam_src):
+def _draw_help_matrix(frame, active, cam_src, target_size=None):
     """Matrice de boutons d'aide (bas-gauche), groupee par type : chaque GROUPE est
     une colonne (en-tete + boutons empiles, alignes en bas). Un bouton s'eclaircit
     quand sa touche est pressee (`active` = index eclaires). Geometrie deterministe
@@ -332,7 +352,11 @@ def _draw_help_matrix(frame, active, cam_src):
         labels = []
         colw = 0
         for idx, key, desc in btns:
-            d = f"{desc} {cam_src}" if idx == _BTN_CAM else desc
+            d = desc
+            if idx == _BTN_CAM:
+                d = f"{desc} {cam_src}"
+            elif idx == _BTN_TARGET and target_size is not None:
+                d = f"{desc} {target_size:.2f}"
             (lw, _), _ = cv2.getTextSize(key, _FONT, sl, 2)
             (dw, _), _ = cv2.getTextSize(d, _FONT, sd, 1)
             labels.append((idx, key, d, lw))
@@ -374,7 +398,8 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
     _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
                    motion_on, smooth)
     _draw_grove_card(frame, fw - 320 - m, fh - 122 - m, gp_port, gp)
-    _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"))
+    _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
+                      getattr(pt, "deadzone", None))
 
 
 class _ServoView:
@@ -517,6 +542,8 @@ class RobotControlCore:
                      locked=tstate.get("locked"), src=tstate.get("src"),
                      raw_det=tstate.get("raw_det"),
                      score=None if score is None else round(score, 3),
+                     lock_id=tstate.get("lock_id"),
+                     lock_age=round(tstate.get("lock_age", 0.0), 2),
                      predict=tstate.get("predict"),
                      pred_speed=None if pspeed is None else round(pspeed, 3),
                      pred_err=None if perr is None else round(perr, 4))
@@ -525,6 +552,8 @@ class RobotControlCore:
             self.tel.log("event", msg="track_unlock" if unlocked else "track_lock",
                          src=tstate.get("src"),
                          reason=tstate.get("unlock_reason") if unlocked else None,
+                         lock_id=tstate.get("lock_id"),
+                         lock_age=round(tstate.get("lock_age", 0.0), 2),
                          score=None if score is None else round(score, 3))
             self.last_locked = tstate.get("locked")
 
@@ -615,6 +644,10 @@ class RobotControlCore:
             self._publish_servo("nudge_tilt", +SERVO_STEP)
         elif c == "k":
             self._publish_servo("nudge_tilt", -SERVO_STEP)
+        elif c in ("+", "="):                    # agrandir la surface cible
+            self._resize_target(+TARGET_STEP)
+        elif c == "-":                           # retrecir la surface cible
+            self._resize_target(-TARGET_STEP)
         elif c.isdigit():
             self.motion.setSpeed(int(c))
         elif k == 32:                            # Espace : STOP moteurs
@@ -635,6 +668,16 @@ class RobotControlCore:
             self.last_move_ts = now
             return False, True
         return False, False
+
+    def _resize_target(self, delta):
+        """Ajuste en direct la taille de la surface cible (demi-cote), bornee.
+        Agit sur le RobotServoMotor du ServoNode ; ServoState (donc le reticule)
+        se met a jour au tour suivant. Sans effet en --board-only (pas de servo)."""
+        if self.servo is None:
+            return
+        m = self.servo.servo
+        m.deadzone = clamp_target(m.deadzone + delta)
+        self.tel.log("event", msg="target_size", size=round(m.deadzone, 3))
 
     # -----------------------------------------------------------------------
     # Boucle principale + arret
@@ -773,6 +816,8 @@ class RobotControlCore:
                      yaw=snap.get("yaw"), ok=snap.get("ok"), bad=snap.get("bad"),
                      trk=tstate.get("mode"), locked=tstate.get("locked"),
                      src=tstate.get("src"),
+                     lock_id=tstate.get("lock_id"),
+                     lock_age=round(tstate.get("lock_age", 0.0), 2),
                      score=None if hb_score is None else round(hb_score, 3),
                      step_max=round(ms.get("step_max", 0.0), 2) if ms else 0.0,
                      grove=None if gp is None else gp.connected,
