@@ -55,7 +55,6 @@ from robot_control.mcp import gateway
 from .roslite import Executor
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
                     FaceRecogNode, FaceTrainNode)
-from .nodes.FaceRecogNode import RECOG_MODES
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
                    ServoState, GrovePiTelemetry, RecognitionConfig, RecognitionResult,
                    TrainState)
@@ -372,7 +371,7 @@ _HELP_GROUPS = [
     ("SUIVI", [(3, "Fleches", "pan/tilt"), (4, "C", "centre"),
                (5, "F", "suivi"), (6, "M", "detecteur"),
                (7, "T", "tracker"), (8, "P", "prediction")]),
-    ("RECO", [(13, "R", "mode reco"), (14, "G", "apprend.")]),
+    ("RECO", [(13, "R", "reco"), (15, "A", "acquis."), (14, "G", "apprend.")]),
     ("SYSTEME", [(11, "V", "cam"), (12, "+/-", "cible"), (10, "Echap", "quitter")]),
 ]
 _BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
@@ -399,7 +398,7 @@ def _help_btn_for_key(key):
     if c in ("+", "=", "-"):
         return _BTN_TARGET
     return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM,
-            "r": 13, "g": 14}.get(c, 9 if c.isdigit() else None)
+            "r": 13, "a": 15, "g": 14}.get(c, 9 if c.isdigit() else None)
 
 
 def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
@@ -742,11 +741,15 @@ class RobotControlCore:
             cur = self.tracking.webcam.predict_mode
             i = PREDICT_MODES.index(cur) if cur in PREDICT_MODES else 0
             self._publish_cfg(predict_mode=PREDICT_MODES[(i + 1) % len(PREDICT_MODES)])
-        elif c == "r":                           # cycle mode reconnaissance (off/reco/acq)
+        elif c == "r":                           # toggle reconnaissance on/off
             if self.recognition is not None:
                 cur = self.recognition.mode
-                i = RECOG_MODES.index(cur) if cur in RECOG_MODES else 0
-                self._publish_recog(mode=RECOG_MODES[(i + 1) % len(RECOG_MODES)])
+                self._publish_recog(mode="off" if cur != "off" else "recognition")
+        elif c == "a":                           # toggle acquisition (jeu d'apprentissage)
+            if self.recognition is not None:
+                cur = self.recognition.mode
+                self._publish_recog(
+                    mode="recognition" if cur == "acquisition" else "acquisition")
         elif c == "g":                           # lance une passe d'apprentissage (enrolement)
             if self.recognition is not None:
                 self._publish_recog(command="train")
@@ -893,8 +896,13 @@ class RobotControlCore:
             accent = {}
             if self.active:
                 accent[5] = _C_ON                      # F (index 5) : suivi arme
-            if recog is not None and getattr(recog, "mode", "off") != "off":
-                accent[13] = _C_ON                     # R (index 13) : mode reco actif
+            _rmode = getattr(recog, "mode", "off") if recog is not None else "off"
+            if _rmode != "off":
+                # R : vert si un visage est reconnu, orange sinon (actif mais inconnu)
+                known = getattr(recog, "status", "") == "known"
+                accent[13] = _C_ON if known else _C_WARN   # R (index 13) : reco active
+            if _rmode == "acquisition":
+                accent[15] = _C_ON                     # A (index 15) : acquisition active
             tr = self.executor.latest("/recognition/train_state")
             train_running = bool(tr.running) if tr is not None else False
             if train_running:

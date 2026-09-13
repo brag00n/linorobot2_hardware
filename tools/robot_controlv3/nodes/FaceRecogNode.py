@@ -57,6 +57,14 @@ class FaceRecogNode(Node):
             cos_thr=getattr(args, "recog_cos_thr", 0.363))
         self.mode = getattr(args, "recog_mode", "off") or "off"
         self._stable_s = float(getattr(args, "recog_lock_stable_s", 2.0))
+        # redressement du visage a la reconnaissance : detecteur YuNet dedie (mis en
+        # cache par taille d'image) pour obtenir des landmarks PLEINE RES et aligner
+        # (alignCrop redresse la tete penchee). Les landmarks du tracker sont souvent
+        # absents (box interpolee VIT) ou en coords reduites -> inexploitables ici.
+        self._yunet_model = getattr(args, "yunet_model", None) or DEFAULT_YUNET_MODEL
+        self._det_conf = float(getattr(args, "det_conf", 0.6))
+        self._yn = None
+        self._yn_wh = None
         # stabilisation temporelle par episode (anti-flicker) : lissage EMA du
         # cosinus + hysteresis a deux seuils. Entree au seuil « meme identite »
         # recommande (0.363) applique au cosinus LISSE (le lissage tue le bruit
@@ -170,8 +178,13 @@ class FaceRecogNode(Node):
 
         lock_id = int(tstate.get("lock_id", 0) or 0)
         id_lot = f"{self._session}-{lock_id}"
-        landmarks = tstate.get("landmarks")
-        emb = self.rec.embed(img.frame, res.main, landmarks)
+        # redressement geometrique : detection YuNet fraiche (plein cadre) -> box + 5
+        # landmarks pleine res -> alignCrop (redresse les visages penches). Repli sur
+        # les landmarks du tracker puis recadrage brut si YuNet ne trouve rien.
+        box, landmarks = self._detectLandmarks(img.frame, res.main)
+        if box is None:
+            box, landmarks = res.main, tstate.get("landmarks")
+        emb = self.rec.embed(img.frame, box, landmarks)
         # candidat le PLUS proche, SANS seuil : l'hysteresis/lissage decide en aval.
         id_cand, name_cand, cos = self.rec.nearest(emb)
 
@@ -218,7 +231,7 @@ class FaceRecogNode(Node):
             id_lot=id_lot, lock_id=lock_id, mode=self.mode)
 
         if self.mode == "acquisition":
-            saved = self._acquire(img.frame, res.main, landmarks, tstate,
+            saved = self._acquire(img.frame, box, landmarks, tstate,
                                   self._ep_id, self._ep_name, id_lot)
             if saved:
                 self._log("acquire", id_lot=id_lot, status=status,
@@ -382,6 +395,37 @@ class FaceRecogNode(Node):
             self._pending_out = RecognitionResult(
                 seq=0, status=status, id_pred=id_pred, name=name,
                 score=round(float(cos), 3), id_lot=lot, mode=self.mode)
+
+    # --- redressement (alignement) live -------------------------------------
+    def _detectLandmarks(self, frame, track_box):
+        """Detection YuNet plein cadre -> (box, 5 landmarks) PLEINE RES du visage
+        recouvrant `track_box`, pour aligner (redresser) le crop comme a l'enrolement.
+        Detecteur mis en cache par taille d'image. (None, None) si indispo/aucun visage."""
+        if not hasattr(cv2, "FaceDetectorYN") or not os.path.exists(self._yunet_model):
+            return None, None
+        h, w = frame.shape[:2]
+        if self._yn is None or self._yn_wh != (w, h):
+            self._yn = cv2.FaceDetectorYN.create(
+                self._yunet_model, "", (w, h), score_threshold=self._det_conf)
+            self._yn_wh = (w, h)
+        _, faces = self._yn.detect(frame)
+        if faces is None or len(faces) == 0:
+            return None, None
+        f = self._pickFace(faces, track_box)
+        box = (int(f[0]), int(f[1]), int(f[2]), int(f[3]))
+        lms = [(float(f[4 + 2 * i]), float(f[5 + 2 * i])) for i in range(5)]
+        return box, lms
+
+    @staticmethod
+    def _pickFace(faces, box):
+        """Visage detecte le plus proche (par centre) de la box suivie ; le plus grand
+        si box absente. Comparaison par centre (et non IoU) car les deux boites viennent
+        de detecteurs differents."""
+        if box is None:
+            return max(faces, key=lambda r: r[2] * r[3])
+        bcx, bcy = box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
+        return min(faces, key=lambda r: (r[0] + r[2] / 2.0 - bcx) ** 2
+                   + (r[1] + r[3] / 2.0 - bcy) ** 2)
 
     def _detectFile(self, frame):
         """Detection YuNet ponctuelle (fichier) -> (box, 5 landmarks) ou (None, None)."""
