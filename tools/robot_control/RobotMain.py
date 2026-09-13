@@ -150,7 +150,7 @@ def parse_args():
                          "sauvegarde les crops alignes). Touche R pour cycler")
     ap.add_argument("--faces-dir", default=None,
                     help="racine du jeu de visages (identified/ + unknown/) ; "
-                         "defaut : tools/robot_control/faces/")
+                         "defaut : tools/data/faces/")
     ap.add_argument("--recog-cos-thr", type=float, default=0.363,
                     help="seuil de similarite cosinus SFace (>= => meme identite ; "
                          "recommandation OpenCV 0.363)")

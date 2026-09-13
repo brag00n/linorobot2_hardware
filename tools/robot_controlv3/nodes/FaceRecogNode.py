@@ -49,7 +49,7 @@ class FaceRecogNode(Node):
         self._tel = telemetry
         faces_dir = getattr(args, "faces_dir", None) or os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "..", "robot_control", "faces")
+            "..", "data", "faces")
         self.faces_dir = os.path.normpath(faces_dir)
         self.rec = FaceRecognizer(
             model_path=getattr(args, "sface_model", None),
