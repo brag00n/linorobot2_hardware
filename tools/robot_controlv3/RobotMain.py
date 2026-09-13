@@ -54,10 +54,11 @@ from robot_control.mcp import gateway
 
 from .roslite import Executor
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
-                    FaceRecogNode)
+                    FaceRecogNode, FaceTrainNode)
 from .nodes.FaceRecogNode import RECOG_MODES
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
-                   ServoState, GrovePiTelemetry, RecognitionConfig, RecognitionResult)
+                   ServoState, GrovePiTelemetry, RecognitionConfig, RecognitionResult,
+                   TrainState)
 
 
 # ===========================================================================
@@ -288,22 +289,18 @@ def _draw_grove_card(frame, x, y, port_name, gp):
 
 
 def _draw_recog_badge(frame, recog):
-    """Badge reconnaissance (haut-centre) : mode + nom/id_pred + score, ou etat train.
+    """Badge reconnaissance (haut-centre) : mode + nom/id_pred + score + stabilite.
 
-    known -> vert (nom + %), unknown -> orange, idle/off -> gris. Pendant/apres un
-    apprentissage, `recog.train` porte la synthese -> affichee brievement."""
+    known -> vert si stable, orange si episode instable (stab < 60%) ; unknown ->
+    orange ; idle/off -> gris. `score` = cosinus lisse (EMA), `stability` = taux de
+    frames « known » sur l'episode (indice anti-flicker)."""
     if recog is None or getattr(recog, "mode", "off") == "off":
         return
-    if recog.train is not None:
-        t = recog.train
-        txt = ("apprentissage : %d personne(s), %d lot(s)"
-               % (t.get("persons", 0), t.get("big_lots", 0))) if t.get("ok") \
-            else "apprentissage : %s" % t.get("error", "KO")
-        col = (120, 220, 120) if t.get("ok") else (90, 90, 220)
-    elif recog.status == "known":
+    if recog.status == "known":
         pct = int(round(max(0.0, min(1.0, recog.score)) * 100))
-        txt = "RECO #%s %s  %d%%" % (recog.id_pred, recog.name, pct)
-        col = (120, 220, 120)
+        stab = int(round(max(0.0, min(1.0, recog.stability)) * 100))
+        txt = "RECO #%s %s  %d%%  stab %d%%" % (recog.id_pred, recog.name, pct, stab)
+        col = (120, 220, 120) if recog.stability >= 0.6 else (0, 170, 255)
     elif recog.status == "unknown":
         txt = "RECO inconnu (%.2f)" % recog.score
         col = (0, 170, 255)
@@ -321,6 +318,36 @@ def _draw_recog_badge(frame, recog):
         fill[:] = (35, 35, 35)
         roi[:] = cv2.addWeighted(roi, 0.35, fill, 0.65, 0.0)
     _put(frame, x, y, full, col, 0.5, 1)
+
+
+def _draw_train_log(frame, tr):
+    """Panneau LOG d'apprentissage (rectangle pointille + fond semi-transparent),
+    ancre cote DROITE-CENTRE (bande libre entre les cartes STM32 et GROVE). Affiche
+    le log FENETRE du batch (dernieres lignes). Cadre rouge + pastille pleine pendant
+    l'apprentissage, gris ensuite. `tr` = message TrainState (/recognition/train_state).
+    La VISIBILITE (pendant + ~20 s apres) est decidee par l'appelant."""
+    running = bool(getattr(tr, "running", False))
+    lines = getattr(tr, "lines", None) or []
+    if not lines and not running:
+        return
+    fw, fh = frame.shape[1], frame.shape[0]
+    m, w, lh = 8, 380, 15
+    band_top, band_bot = 152, fh - 134          # entre STM32 (haut-D) et GROVE (bas-D)
+    avail = max(60, band_bot - band_top)
+    maxlines = max(3, min(12, (avail - 46) // lh))
+    show = lines[-maxlines:]
+    h = 34 + max(1, len(show)) * lh + 8
+    x = fw - w - m
+    y = band_top + max(0, (avail - h) // 2)
+    _card_bg(frame, x, y, w, h, alpha=0.6)
+    _dashed_rect(frame, x, y, w, h, _C_BAD if running else _C_BORDER)
+    cv2.circle(frame, (x + 13, y + 16), 5, _C_BAD if running else _C_OFF, -1)
+    hdr = "APPRENTISSAGE" + ("  (en cours)" if running else "")
+    _put(frame, x + 25, y + 21, hdr, _C_TITLE, 0.5)
+    ly = y + 34 + 11
+    for ln in show:
+        _put(frame, x + 10, ly, ln[:58], (190, 205, 190), 0.38, 1)
+        ly += lh
 
 
 def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
@@ -375,11 +402,15 @@ def _help_btn_for_key(key):
             "r": 13, "g": 14}.get(c, 9 if c.isdigit() else None)
 
 
-def _draw_help_matrix(frame, active, cam_src, target_size=None):
+def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
     """Matrice de boutons d'aide (bas-gauche), groupee par type : chaque GROUPE est
     une colonne (en-tete + boutons empiles, alignes en bas). Un bouton s'eclaircit
     quand sa touche est pressee (`active` = index eclaires). Geometrie deterministe
-    -> stable, seule la couleur change. `cam_src` ('ext'/'int') annote le bouton V."""
+    -> stable, seule la couleur change. `cam_src` ('ext'/'int') annote le bouton V.
+    `accent` = {index: couleur BGR} : bouton a etat COLLANT (allume tant que l'etat
+    dure, teinte de la couleur) -> F allume quand le suivi est arme, G rouge pendant
+    l'apprentissage. Prioritaire sur le flash `active`."""
+    accent = accent or {}
     fh = frame.shape[0]
     x0, bottom = 8, fh - 8
     sl, sd, sh = 0.45, 0.4, 0.4      # echelles libelle / description / en-tete
@@ -406,25 +437,31 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None):
         _put(frame, x + 1, start_y - 7, header, (140, 140, 140), sh, 1)
         for i, (idx, key, d, lw) in enumerate(labels):
             by = start_y + i * s
+            acc = accent.get(idx)
             on = idx in active
+            lit = on or acc is not None
             roi = frame[by:by + bh, x:x + colw]
             if roi.size:
                 fill = np.empty_like(roi)
-                fill[:] = (105, 105, 105) if on else (45, 45, 45)
-                a = 0.85 if on else 0.55
+                if acc is not None:
+                    fill[:] = tuple(int(c * 0.6) for c in acc)   # accent assombri (fond)
+                    a = 0.8
+                else:
+                    fill[:] = (105, 105, 105) if on else (45, 45, 45)
+                    a = 0.85 if on else 0.55
                 roi[:] = cv2.addWeighted(roi, 1.0 - a, fill, a, 0.0)
-            cv2.rectangle(frame, (x, by), (x + colw, by + bh),
-                          (170, 170, 170) if on else (75, 75, 75), 1)
+            border = acc if acc is not None else ((170, 170, 170) if on else (75, 75, 75))
+            cv2.rectangle(frame, (x, by), (x + colw, by + bh), border, 1)
             ty = by + bh - 6
-            _put(frame, x + pad, ty, key, (255, 255, 255) if on else (215, 215, 215), sl, 2)
+            _put(frame, x + pad, ty, key, (255, 255, 255) if lit else (215, 215, 215), sl, 2)
             _put(frame, x + pad + lw + lg, ty, d,
-                 (185, 185, 185) if on else (160, 160, 160), sd, 1)
+                 (200, 210, 200) if lit else (160, 160, 160), sd, 1)
         x += colw + colgap
 
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
-                    key_flash=None):
+                    key_flash=None, btn_accent=None):
     """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
 
     CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
@@ -438,7 +475,7 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                    motion_on, smooth)
     _draw_grove_card(frame, fw - 320 - m, fh - 122 - m, gp_port, gp)
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
-                      getattr(pt, "deadzone", None))
+                      getattr(pt, "deadzone", None), accent=btn_accent)
 
 
 class _ServoView:
@@ -477,6 +514,7 @@ class RobotControlCore:
         self.camera = self.tracking = self.servo = self.board = None
         self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
         self.recognition = None                  # node reconnaissance de visage (optionnel)
+        self.train = None                        # node dedie a l'apprentissage (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
 
         # --- etat de boucle cote Core (HMI/clavier/MCP), comme l'ancien app -----
@@ -493,6 +531,7 @@ class RobotControlCore:
         self.disp_fps = 0.0
         self._hb_t0 = 0.0
         self._btn_flash = {}         # index bouton d'aide -> date de derniere pression
+        self._train_done_t = 0.0     # date de fin du dernier batch (panneau log ~20 s apres)
 
     # -----------------------------------------------------------------------
     # Mise en place : telemetrie, liaison serie, nodes, executeur
@@ -530,8 +569,11 @@ class RobotControlCore:
             self.tracking = TrackingNode(args, telemetry=self.tel)
             # reconnaissance APRES le suivi : consomme /tracking/result (box+landmarks+lock)
             self.recognition = FaceRecogNode(args, telemetry=self.tel)
+            # apprentissage : node DEDIE (worker unique) -> /recognition/train_state
+            self.train = FaceTrainNode(args, telemetry=self.tel)
             self.servo = ServoNode(args, self.link, telemetry=self.tel)
-            nodes = [self.camera, self.tracking, self.recognition, self.servo, self.board]
+            nodes = [self.camera, self.tracking, self.recognition, self.train,
+                     self.servo, self.board]
             if self.grovepi is not None:
                 nodes.append(self.grovepi)
             for node in nodes:
@@ -846,11 +888,29 @@ class RobotControlCore:
             # ...puis les 3 cartes materielles v3 (CAM / STM32 / GROVE) + aide clavier.
             # boutons a eclairer = touches pressees dans les 300 ms (flash a la pression)
             flash = {i for i, t in self._btn_flash.items() if now - t < 0.3}
+            # boutons a etat COLLANT : F allume tant que le suivi est arme, G rouge
+            # tant que le node d'apprentissage tourne (etat lu sur /recognition/train_state).
+            accent = {}
+            if self.active:
+                accent[5] = _C_ON                      # F (index 5) : suivi arme
+            if recog is not None and getattr(recog, "mode", "off") != "off":
+                accent[13] = _C_ON                     # R (index 13) : mode reco actif
+            tr = self.executor.latest("/recognition/train_state")
+            train_running = bool(tr.running) if tr is not None else False
+            if train_running:
+                accent[14] = _C_BAD                    # G (index 14) : apprentissage en cours
+                self._train_done_t = 0.0
+            elif tr is not None and tr.summary is not None and self._train_done_t == 0.0:
+                self._train_done_t = now               # 1er tick apres la fin du batch
             _draw_hud_cards(frame, cam_ok, self.camera, self.link, self.args.port,
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
-                            self.disp_fps, tstate, gp, key_flash=flash)
+                            self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent)
             _draw_recog_badge(frame, recog)     # nom/id_pred + score + mode reco
+            # panneau log d'apprentissage : pendant le batch, puis ~20 s apres
+            if tr is not None and (train_running
+                                   or (self._train_done_t and now - self._train_done_t < 20.0)):
+                _draw_train_log(frame, tr)
             if not self.headless:
                 cv2.imshow(self.win, frame)      # fenetre coupee en --headless
             self.tel.snapshot(frame)

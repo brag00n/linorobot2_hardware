@@ -70,19 +70,39 @@ class RecognitionResult:
     """Resultat de reconnaissance du visage suivi (publie par episode/throttle).
 
     status : known (id_pred+name) / unknown (aucune personne >= seuil) / idle
-    (rien a reconnaitre : pas de verrou stable ou mode off). score = meilleur
-    cosinus. id_lot = lot de l'episode courant (acquisition). lock_id = episode.
-    train : etat de la derniere passe d'apprentissage (dict de synthese) ou None.
+    (rien a reconnaitre : pas de verrou stable ou mode off). score = cosinus LISSE
+    (EMA, sert au badge) ; raw_score = cosinus instantane non lisse ; stability =
+    taux de frames « known » sur l'episode courant (0..1, indice anti-flicker).
+    id_lot = lot de l'episode courant (acquisition). lock_id = episode.
     """
     seq: int
     status: str = "idle"
     id_pred: Optional[int] = None
     name: str = "unknown"
     score: float = 0.0
+    raw_score: float = 0.0
+    stability: float = 0.0
     id_lot: Optional[str] = None
     lock_id: int = 0
     mode: str = "off"
-    train: Optional[dict] = None
+
+
+@dataclass
+class TrainState:
+    """Etat du node dedie a l'apprentissage (FaceTrainNode) -> Core (HUD) + FaceRecogNode.
+
+    running : un batch d'enrolement tourne dans le worker (UN SEUL a la fois).
+    lines   : log FENETRE des dernieres etapes (ring buffer) pour le panneau HUD.
+    summary : synthese du dernier batch termine (dict) ou None si jamais lance / en cours.
+    done_seq: incremente a CHAQUE fin de batch -> signal de rechargement de galerie
+    pour le FaceRecogNode (qui ecoute ce topic). `seq` = version d'etat (publie au
+    changement) pour eviter le spam sur le bus profondeur 1.
+    """
+    seq: int = 0
+    running: bool = False
+    lines: List[str] = field(default_factory=list)
+    summary: Optional[dict] = None
+    done_seq: int = 0
 
 
 @dataclass

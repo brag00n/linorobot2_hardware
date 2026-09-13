@@ -57,8 +57,25 @@ robot_controlv3/
   RobotMain.py          Core : hote executeur + HMI/clavier/MCP/log/affichage
   msgs.py               types de messages (@dataclass = futurs .msg)
   roslite/              Node + Port (file profondeur 1) + Executor (bus, spin_once)
-  nodes/                CameraNode, TrackingNode, ServoNode, BoardNode
+  nodes/                CameraNode, TrackingNode, ServoNode, BoardNode,
+                        GrovePiNode, FaceRecogNode, FaceTrainNode
 ```
+
+Fonctions caracteristiques de chaque node (l'algorithme reste porte par le code) :
+
+- **CameraNode** — capture camera + detection de visage (YuNet / DNN res10 / haar).
+- **TrackingNode** — suivi du visage : filtrage/prediction de trajectoire par Kalman
+  (off/anticip/coast), zone morte carree, verrou d'episode (`lock_id`/`lock_age`).
+- **ServoNode** — pilotage des servos pan/tilt avec lissage (slew).
+- **BoardNode** — liaison serie STM32 (protocole trames).
+- **GrovePiNode** — acquisition capteurs (MPU6050 + 4 HC-SR04).
+- **FaceRecogNode** — reconnaissance du visage suivi par embeddings SFace + galerie ;
+  **stabilisation de la reconnaissance en appliquant un lissage EMA + une hysteresis a
+  deux seuils par episode** (anti-flicker) ; **metrique de stabilite** de reconnaissance
+  (taux de reco, moyenne/ecart-type cosinus, bascules) ; acquisition du jeu
+  d'apprentissage au fil de l'eau.
+- **FaceTrainNode** — apprentissage (enrolement SFace) dedie dans un thread worker unique
+  (une seule passe a la fois), avec regroupement automatique des lots d'une meme personne.
 
 Modele de transport : un `Port` = donnee unitaire d'une file ROS de **profondeur 1**.
 L'`Executor` appelle les nodes dans l'ordre de la pipeline ; pour chacun il fait
@@ -70,7 +87,8 @@ Les nodes **composent par import** les classes de couche de `robot_control`
 (`RobotSensorWebCam`, `RobotWebCamMotorized`, `RobotServoMotor`, `RobotComSerial`) :
 detection, Kalman, slew servo, protocole serie **inchanges**. Topics :
 `/camera/image`, `/tracking/config`, `/tracking/result`, `/tracking/metrics`,
-`/servo/cmd`, `/servo/state`, `/board/telemetry`.
+`/servo/cmd`, `/servo/state`, `/board/telemetry`, `/grovepi/telemetry`,
+`/recognition/config`, `/recognition/result`, `/recognition/train_state`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m robot_controlv3.RobotMain --no-motion --index 1 --flip h

@@ -157,6 +157,20 @@ def parse_args():
     ap.add_argument("--recog-lock-stable-s", type=float, default=2.0,
                     help="age min du verrou de suivi (s) avant de tenter une "
                          "reconnaissance (episode juge stable)")
+    ap.add_argument("--recog-cos-on", type=float, default=None,
+                    help="hysteresis reco : seuil (cosinus LISSE) pour PASSER a "
+                         "« connu » (defaut = cos-thr 0.363)")
+    ap.add_argument("--recog-cos-off", type=float, default=0.30,
+                    help="hysteresis reco : seuil (cosinus LISSE) pour DECROCHER "
+                         "de « connu » (defaut 0.30 ; < cos-on -> tient le verrou)")
+    ap.add_argument("--recog-ema", type=float, default=0.4,
+                    help="poids EMA du cosinus (lissage temporel anti-flicker ; "
+                         "0..1, defaut 0.4)")
+    ap.add_argument("--recog-live-period", type=float, default=2.0,
+                    help="cadence (s) des events telemetrie reco live `recog_live` "
+                         "(defaut 2.0)")
+    ap.add_argument("--recog-live-win", type=float, default=3.0,
+                    help="fenetre (s) de moyenne des stats reco live (defaut 3.0)")
     ap.add_argument("--recog-min-ok", type=float, default=0.6,
                     help="taux de reconnaissance holdout mini pour valider un lot a "
                          "l'apprentissage")

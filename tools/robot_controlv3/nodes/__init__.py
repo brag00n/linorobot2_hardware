@@ -10,6 +10,7 @@ from .ServoNode import ServoNode
 from .BoardNode import BoardNode
 from .GrovePiNode import GrovePiNode
 from .FaceRecogNode import FaceRecogNode
+from .FaceTrainNode import FaceTrainNode
 
 __all__ = ["CameraNode", "TrackingNode", "ServoNode", "BoardNode",
-           "GrovePiNode", "FaceRecogNode"]
+           "GrovePiNode", "FaceRecogNode", "FaceTrainNode"]

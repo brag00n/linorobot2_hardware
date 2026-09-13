@@ -144,6 +144,23 @@ class FaceRecognizer:
             return best_id, best_name, best_cos
         return None, "unknown", best_cos
 
+    def nearest(self, emb):
+        """Identite de galerie la PLUS proche, SANS seuil -> (id_pred, name, cos).
+
+        Comme match() mais renvoie toujours le meilleur candidat (meme sous le seuil)
+        pour laisser l'appelant appliquer sa propre hysteresis/lissage temporel.
+        Renvoie (None, 'unknown', -1.0) si la galerie est vide.
+        """
+        best_id, best_name, best_cos = None, "unknown", -1.0
+        for id_pred, entry in self._gallery.items():
+            embs = entry["embeddings"]
+            if embs is None or len(embs) == 0:
+                continue
+            cos = max(self.cosine(emb, e) for e in embs)
+            if cos > best_cos:
+                best_id, best_name, best_cos = id_pred, entry["name"], cos
+        return best_id, best_name, best_cos
+
     # --- galerie -------------------------------------------------------------
     @staticmethod
     def parseIdentifiedName(dirname):
