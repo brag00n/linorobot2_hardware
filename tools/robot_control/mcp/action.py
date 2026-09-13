@@ -119,6 +119,27 @@ def t_set_tracking(args):
     return _config("set_tracking", {"on": bool(args.get("on"))})
 
 
+# --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
+def t_set_recog_mode(args):
+    mode = (args.get("mode") or "").strip().lower()
+    if mode not in ("off", "recognition", "acquisition"):
+        return ("mode invalide '%s'. Attendu : off | recognition | acquisition." % mode)
+    return _config("set_recog_mode", {"mode": mode})
+
+
+def t_train_faces(args):
+    return _config("train_faces", {})
+
+
+def t_recognize_image(args):
+    return _config("recognize_image", {"path": args.get("path")})
+
+
+def t_acquire_image(args):
+    return _config("acquire_image", {"path": args.get("path"),
+                                     "id_lot": args.get("id_lot")})
+
+
 # ---------------------------------------------------------------------------
 # Outils CARTE (relais app, sinon COM4 direct) -- garde-fous dans handle_command
 # ---------------------------------------------------------------------------
@@ -219,6 +240,46 @@ TOOLS = [
                          "on": {"type": "boolean",
                                 "description": "true = armer le suivi, false = desarmer"}},
                      "required": ["on"]}},
+
+    # --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
+    {"name": "set_recog_mode",
+     "description": "Change le mode de reconnaissance de visage A CHAUD (equivaut a la "
+                    "touche R). off = rien ; recognition = predit id/nom du visage suivi ; "
+                    "acquisition = predit + sauvegarde les crops alignes (jeu "
+                    "d'apprentissage). Relais socket ; app requise (robot_controlv3).",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode": {"type": "string",
+                                  "enum": ["off", "recognition", "acquisition"],
+                                  "description": "off | recognition | acquisition"}},
+                     "required": ["mode"]}},
+    {"name": "train_faces",
+     "description": "Lance une passe d'apprentissage (enrolement SFace) dans le thread "
+                    "worker de l'app (equivaut a la touche G) : scanne unknown/<id_lot>, "
+                    "enrole, valide, regroupe les lots d'une meme personne, cree les "
+                    "dossiers identified/. Relais socket ; app requise.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "recognize_image",
+     "description": "Reconnait le visage d'une IMAGE sur disque (chemin) via SFace et "
+                    "renvoie la prediction (id_pred+nom, ou inconnu + score cosinus). "
+                    "Detecte le visage avec YuNet. Relais socket ; app requise.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string",
+                                  "description": "chemin de l'image a reconnaitre"}},
+                     "required": ["path"]}},
+    {"name": "acquire_image",
+     "description": "Acquisition manuelle : detecte+aligne le visage d'une image sur "
+                    "disque et le sauvegarde dans le jeu d'apprentissage (identified/ si "
+                    "reconnu, sinon unknown/<id_lot>). Relais socket ; app requise.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string",
+                                  "description": "chemin de l'image a acquerir"},
+                         "id_lot": {"type": "string",
+                                    "description": "identifiant de lot (meme personne) ; "
+                                                   "genere si absent"}},
+                     "required": ["path"]}},
 
     # --- pilotage carte (relais app, sinon COM4 direct) ---
     {"name": "motor_drive",
@@ -371,6 +432,10 @@ HANDLERS = {
     "set_track_mode": t_set_track_mode,
     "set_predict_mode": t_set_predict_mode,
     "set_tracking": t_set_tracking,
+    "set_recog_mode": t_set_recog_mode,
+    "train_faces": t_train_faces,
+    "recognize_image": t_recognize_image,
+    "acquire_image": t_acquire_image,
     "enter_bootloader": t_enter_bootloader,
     "flash_firmware": t_flash_firmware,
 }

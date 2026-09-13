@@ -49,6 +49,43 @@ class TrackingResult:
 
 
 @dataclass
+class RecognitionConfig:
+    """Configuration/commande du noeud de reconnaissance (touches r/l, MCP).
+
+    mode : off / recognition / acquisition (etat continu du noeud).
+    command : commande ponctuelle a executer une fois (train / acquire_file /
+    recognize_file), None sinon. `seq` rend la commande discrete (le noeud
+    n'execute qu'a chaque seq neuf, file profondeur 1). path/id_lot : arguments
+    des commandes fichier manuelles.
+    """
+    mode: Optional[str] = None
+    command: Optional[str] = None
+    seq: int = 0
+    path: Optional[str] = None
+    id_lot: Optional[str] = None
+
+
+@dataclass
+class RecognitionResult:
+    """Resultat de reconnaissance du visage suivi (publie par episode/throttle).
+
+    status : known (id_pred+name) / unknown (aucune personne >= seuil) / idle
+    (rien a reconnaitre : pas de verrou stable ou mode off). score = meilleur
+    cosinus. id_lot = lot de l'episode courant (acquisition). lock_id = episode.
+    train : etat de la derniere passe d'apprentissage (dict de synthese) ou None.
+    """
+    seq: int
+    status: str = "idle"
+    id_pred: Optional[int] = None
+    name: str = "unknown"
+    score: float = 0.0
+    id_lot: Optional[str] = None
+    lock_id: int = 0
+    mode: str = "off"
+    train: Optional[dict] = None
+
+
+@dataclass
 class TrackingMetrics:
     """Metriques de perf/etat pour le HUD (publiees a chaque tour)."""
     det_fps: float = 0.0

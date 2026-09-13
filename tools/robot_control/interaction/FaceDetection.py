@@ -178,6 +178,14 @@ class FaceDetection:
         self._pending = None          # detecteur demande a chaud (applique par process)
         self._yunet = None            # instance FaceDetectorYN (taille memorisee)
         self._yunet_size = None
+        # Lignes brutes de la derniere detection (YuNet : N x 15 = box + 5 landmarks
+        # + score). Sert a retrouver les 5 landmarks (yeux/nez/bouche) d'une box pour
+        # l'ALIGNEMENT en reconnaissance faciale (alignCrop). haar/dnn -> None (pas de
+        # landmarks). _main_landmarks = landmarks (coords small) de la box principale
+        # RENVOYEE, uniquement quand elle vient d'une detection fraiche (None sur une
+        # box issue du tracker : pas de landmarks fiables sur une image interpolee).
+        self._det_rows = None
+        self._main_landmarks = None
 
     # --- detecteurs : disponibilite / bascule -------------------------------
     def ready(self, det=None):
@@ -281,7 +289,27 @@ class FaceDetection:
                 "raw_det": self._raw_det, "raw_box": self._raw_det_box,
                 "unlock_reason": self._unlock_reason,
                 "lock_id": self._lock_id if self._locked else 0,
-                "lock_age": age}
+                "lock_age": age,
+                # 5 landmarks (coords small) de la box principale si elle vient d'une
+                # detection YuNet fraiche, sinon None -> permet l'alignement en reco.
+                "landmarks": self._main_landmarks}
+
+    def _landmarksFor(self, box):
+        """5 landmarks (coords small) de la detection correspondant a box, ou None.
+
+        box = (x,y,w,h) coords small. Retrouve la ligne YuNet dont la box coincide
+        (yeux D/G, nez, coins bouche D/G) ; seul YuNet fournit des landmarks
+        (haar/dnn -> None). Utilise pour l'ALIGNEMENT geometrique en reconnaissance.
+        """
+        rows = self._det_rows
+        if not rows or box is None:
+            return None
+        bx, by = int(box[0]), int(box[1])
+        for f in rows:
+            if int(f[0]) == bx and int(f[1]) == by:
+                return [(float(f[4 + 2 * i]), float(f[5 + 2 * i]))
+                        for i in range(5)]
+        return None
 
     # --- tracker visuel : instanciation / (re)init / reset ------------------
     def _makeTracker(self, mode):
@@ -315,6 +343,7 @@ class FaceDetection:
         self._ref_area = 0.0
         self._raw_det = None
         self._raw_det_box = None
+        self._main_landmarks = None       # plus de box principale -> plus de landmarks
         self._lock_t0 = None              # fin d'episode : la duree de vie repart a 0
         self._miss_streak = 0             # nouvel episode : compteur d'echecs remis a zero
 
@@ -331,6 +360,7 @@ class FaceDetection:
                 raise RuntimeError(f"echec chargement cascade : {self.cascade_path}")
 
             def _haar(small):
+                self._det_rows = None            # haar : pas de landmarks
                 gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
                 dets = cascade.detectMultiScale(
                     gray, scaleFactor=self.scale_factor,
@@ -344,6 +374,7 @@ class FaceDetection:
             net = cv2.dnn.readNetFromCaffe(self.dnn_proto, self.dnn_model)
 
             def _dnn(small):
+                self._det_rows = None            # dnn SSD : pas de landmarks
                 h, w = small.shape[:2]
                 blob = cv2.dnn.blobFromImage(
                     small, 1.0, (300, 300), (104.0, 177.0, 123.0),
@@ -375,7 +406,12 @@ class FaceDetection:
                     self._yunet_size = (w, h)
                 _, faces = self._yunet.detect(small)
                 if faces is None:
+                    self._det_rows = None
                     return []
+                # on GARDE les lignes brutes (box + 5 landmarks f[4:14] + score
+                # f[14]) pour l'alignement en reconnaissance ; on ne renvoie que les
+                # box (4-uplets) pour ne rien changer a la geometrie du suivi.
+                self._det_rows = [tuple(float(v) for v in f) for f in faces]
                 return [(int(f[0]), int(f[1]), int(f[2]), int(f[3]))
                         for f in faces]
             self._impl = _yunet
@@ -435,6 +471,7 @@ class FaceDetection:
             self._track_score = None
             self._raw_det = None
             self._raw_det_box = None
+            self._main_landmarks = self._landmarksFor(main_s)
             return main_s, faces_s
         return self.trackStep(small, sw, sh)
 
@@ -458,9 +495,11 @@ class FaceDetection:
                 # branche LOCKED conserve l'episode = meme personne). Nouvel id + t0.
                 self._lock_id += 1
                 self._lock_t0 = now
+                self._main_landmarks = self._landmarksFor(main_s)
                 return main_s, [main_s]
             self._lock_src = "off"
             self._track_score = None
+            self._main_landmarks = None
             return None, dets
 
         # LOCKED : le tracker suit l'apparence
@@ -507,6 +546,7 @@ class FaceDetection:
                 self._locked = True
                 self._lock_src = "redetect"
                 self._last_confirm = now
+                self._main_landmarks = self._landmarksFor(det_main)
                 return det_main, [det_main]
             self._unlock_reason = lost_reason   # perdu et aucune detection -> relache
             self._resetLock()
@@ -520,6 +560,7 @@ class FaceDetection:
                 far = _iou(box, det_main) < self.iou_reanchor
                 self._lock_src = "recenter" if far else "reanchor"
                 self._last_confirm = now
+                self._main_landmarks = self._landmarksFor(det_main)
                 return det_main, [det_main]
         # detecteur muet mais tracker tient (profil) : decision de maintien.
         if do_redetect and det_main is None:
@@ -543,4 +584,5 @@ class FaceDetection:
             # sinon : sursis (pas encore expire, ou tracker confiant) -> on garde
             # le suivi et on retourne la box du tracker (fall-through ci-dessous).
         self._lock_src = "track"
+        self._main_landmarks = None      # box interpolee : pas de landmarks fiables
         return box, [box]

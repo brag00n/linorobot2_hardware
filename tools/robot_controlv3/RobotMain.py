@@ -53,9 +53,11 @@ from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
 from robot_control.mcp import gateway
 
 from .roslite import Executor
-from .nodes import CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode
+from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
+                    FaceRecogNode)
+from .nodes.FaceRecogNode import RECOG_MODES
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
-                   ServoState, GrovePiTelemetry)
+                   ServoState, GrovePiTelemetry, RecognitionConfig, RecognitionResult)
 
 
 # ===========================================================================
@@ -285,6 +287,42 @@ def _draw_grove_card(frame, x, y, port_name, gp):
     _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
 
 
+def _draw_recog_badge(frame, recog):
+    """Badge reconnaissance (haut-centre) : mode + nom/id_pred + score, ou etat train.
+
+    known -> vert (nom + %), unknown -> orange, idle/off -> gris. Pendant/apres un
+    apprentissage, `recog.train` porte la synthese -> affichee brievement."""
+    if recog is None or getattr(recog, "mode", "off") == "off":
+        return
+    if recog.train is not None:
+        t = recog.train
+        txt = ("apprentissage : %d personne(s), %d lot(s)"
+               % (t.get("persons", 0), t.get("big_lots", 0))) if t.get("ok") \
+            else "apprentissage : %s" % t.get("error", "KO")
+        col = (120, 220, 120) if t.get("ok") else (90, 90, 220)
+    elif recog.status == "known":
+        pct = int(round(max(0.0, min(1.0, recog.score)) * 100))
+        txt = "RECO #%s %s  %d%%" % (recog.id_pred, recog.name, pct)
+        col = (120, 220, 120)
+    elif recog.status == "unknown":
+        txt = "RECO inconnu (%.2f)" % recog.score
+        col = (0, 170, 255)
+    else:
+        txt = "reco %s : en attente" % recog.mode
+        col = (170, 170, 170)
+    full = "%s   [%s]" % (txt, recog.mode)
+    (tw, th), _ = cv2.getTextSize(full, _FONT, 0.5, 1)
+    fw = frame.shape[1]
+    x = max(6, (fw - tw) // 2)
+    y = 22
+    roi = frame[y - th - 6:y + 4, x - 6:x + tw + 6]
+    if roi.size:
+        fill = np.empty_like(roi)
+        fill[:] = (35, 35, 35)
+        roi[:] = cv2.addWeighted(roi, 0.35, fill, 0.65, 0.0)
+    _put(frame, x, y, full, col, 0.5, 1)
+
+
 def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
     """Marqueurs LIES A L'IMAGE (detections, cible, reticule, point predit) — le HUD
     texte de robot_control est remplace par les cartes v3, mais ces marqueurs
@@ -307,6 +345,7 @@ _HELP_GROUPS = [
     ("SUIVI", [(3, "Fleches", "pan/tilt"), (4, "C", "centre"),
                (5, "F", "suivi"), (6, "M", "detecteur"),
                (7, "T", "tracker"), (8, "P", "prediction")]),
+    ("RECO", [(13, "R", "mode reco"), (14, "G", "apprend.")]),
     ("SYSTEME", [(11, "V", "cam"), (12, "+/-", "cible"), (10, "Echap", "quitter")]),
 ]
 _BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
@@ -332,8 +371,8 @@ def _help_btn_for_key(key):
         return 3
     if c in ("+", "=", "-"):
         return _BTN_TARGET
-    return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM}.get(
-        c, 9 if c.isdigit() else None)
+    return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM,
+            "r": 13, "g": 14}.get(c, 9 if c.isdigit() else None)
 
 
 def _draw_help_matrix(frame, active, cam_src, target_size=None):
@@ -437,6 +476,7 @@ class RobotControlCore:
         self.executor = None
         self.camera = self.tracking = self.servo = self.board = None
         self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
+        self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
 
         # --- etat de boucle cote Core (HMI/clavier/MCP), comme l'ancien app -----
@@ -446,6 +486,7 @@ class RobotControlCore:
         self.moving = False          # une commande moteur est en cours
         self.last_move_ts = 0.0
         self._servo_seq = 0          # sequence des ServoCmd clavier (messages discrets)
+        self._recog_seq = 0          # sequence des commandes reco ponctuelles (train/fichier)
 
         self._disp_t0 = 0.0
         self._disp_n = 0
@@ -487,8 +528,10 @@ class RobotControlCore:
         else:
             self.camera = CameraNode(args, telemetry=self.tel)
             self.tracking = TrackingNode(args, telemetry=self.tel)
+            # reconnaissance APRES le suivi : consomme /tracking/result (box+landmarks+lock)
+            self.recognition = FaceRecogNode(args, telemetry=self.tel)
             self.servo = ServoNode(args, self.link, telemetry=self.tel)
-            nodes = [self.camera, self.tracking, self.servo, self.board]
+            nodes = [self.camera, self.tracking, self.recognition, self.servo, self.board]
             if self.grovepi is not None:
                 nodes.append(self.grovepi)
             for node in nodes:
@@ -498,6 +541,8 @@ class RobotControlCore:
         # 4) config initiale du suivi + serveur de commandes MCP (socket loopback)
         if not self.board_only:
             self.executor.publish("/tracking/config", TrackingConfig(active=self.active))
+            self.executor.publish("/recognition/config",
+                                  RecognitionConfig(mode=self.recognition.mode))
         host, port = gateway.parse_addr(os.environ.get("BAMBOU_MCP_PORT"))
         self.server = gateway.CommandServer(
             on_config=self._apply_config, link=self.link, motion=self.motion,
@@ -524,6 +569,13 @@ class RobotControlCore:
         """Publie un ServoCmd clavier discret (recentrage / pas manuel pan-tilt)."""
         self._servo_seq += 1
         self.executor.publish("/servo/cmd", ServoCmd(kind=kind, seq=self._servo_seq, delta=delta))
+
+    def _publish_recog(self, mode=None, command=None, path=None, id_lot=None):
+        """Publie /recognition/config : changement de mode et/ou commande ponctuelle."""
+        if command is not None:
+            self._recog_seq += 1
+        self.executor.publish("/recognition/config", RecognitionConfig(
+            mode=mode, command=command, seq=self._recog_seq, path=path, id_lot=id_lot))
 
     # -----------------------------------------------------------------------
     # Journalisation par NOUVELLE detection (event detect + transition verrou)
@@ -586,6 +638,22 @@ class RobotControlCore:
             self._publish_cfg()
             self.tel.log("event", msg="tracking", on=self.active, source="mcp")
             return "Suivi -> %s." % ("ON" if self.active else "off")
+        # --- reconnaissance de visage (node optionnel) ----------------------
+        if self.recognition is not None:
+            rm = cfg.get("recog_mode")
+            if rm:
+                self._publish_recog(mode=rm)
+                return "Reconnaissance -> %s (publie sur /recognition/config)." % rm
+            if cfg.get("train"):
+                self._publish_recog(command="train")
+                return "Apprentissage (enrolement) lance dans le thread worker."
+            if "recognize_image" in cfg:
+                self._publish_recog(command="recognize_file", path=cfg["recognize_image"])
+                return "Reconnaissance image -> %s." % cfg["recognize_image"]
+            if "acquire_image" in cfg:
+                self._publish_recog(command="acquire_file", path=cfg["acquire_image"],
+                                    id_lot=cfg.get("id_lot"))
+                return "Acquisition image -> %s." % cfg["acquire_image"]
         return "Commande de config vide."
 
     # -----------------------------------------------------------------------
@@ -632,6 +700,15 @@ class RobotControlCore:
             cur = self.tracking.webcam.predict_mode
             i = PREDICT_MODES.index(cur) if cur in PREDICT_MODES else 0
             self._publish_cfg(predict_mode=PREDICT_MODES[(i + 1) % len(PREDICT_MODES)])
+        elif c == "r":                           # cycle mode reconnaissance (off/reco/acq)
+            if self.recognition is not None:
+                cur = self.recognition.mode
+                i = RECOG_MODES.index(cur) if cur in RECOG_MODES else 0
+                self._publish_recog(mode=RECOG_MODES[(i + 1) % len(RECOG_MODES)])
+        elif c == "g":                           # lance une passe d'apprentissage (enrolement)
+            if self.recognition is not None:
+                self._publish_recog(command="train")
+                self.tel.log("event", msg="train_request", source="key")
         elif c == "v":                           # bascule camera interne <-> externe
             if self.camera is not None:
                 self.camera.switch_camera()
@@ -740,6 +817,7 @@ class RobotControlCore:
             sstate = self.executor.latest("/servo/state") or ServoState(deadzone=self.args.deadzone)
             board = self.executor.latest("/board/telemetry")
             gp = self.executor.latest("/grovepi/telemetry")
+            recog = self.executor.latest("/recognition/result")
 
             # 4) cadence d'affichage
             self._disp_n += 1
@@ -772,6 +850,7 @@ class RobotControlCore:
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
                             self.disp_fps, tstate, gp, key_flash=flash)
+            _draw_recog_badge(frame, recog)     # nom/id_pred + score + mode reco
             if not self.headless:
                 cv2.imshow(self.win, frame)      # fenetre coupee en --headless
             self.tel.snapshot(frame)

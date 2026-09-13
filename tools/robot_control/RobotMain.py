@@ -138,6 +138,36 @@ def parse_args():
                     help="aire max de la box suivie (fraction du cadre) avant perte (anti-grossissement)")
     ap.add_argument("--track-max-grow", type=float, default=3.0,
                     help="facteur de grossissement max de la box depuis l'ancrage avant perte")
+    # --- reconnaissance de visage (SFace + galerie ; robot_controlv3, node reco) ---
+    ap.add_argument("--sface-model", default=None,
+                    help="chemin du modele SFace .onnx (defaut : "
+                         "face_recognition_sface_2021dec.onnx dans "
+                         "resources/Other/face_detection_model)")
+    ap.add_argument("--recog-mode", default="off",
+                    choices=["off", "recognition", "acquisition"],
+                    help="mode reconnaissance au demarrage : off (defaut), recognition "
+                         "(predit id/nom du visage suivi), acquisition (predit + "
+                         "sauvegarde les crops alignes). Touche R pour cycler")
+    ap.add_argument("--faces-dir", default=None,
+                    help="racine du jeu de visages (identified/ + unknown/) ; "
+                         "defaut : tools/robot_control/faces/")
+    ap.add_argument("--recog-cos-thr", type=float, default=0.363,
+                    help="seuil de similarite cosinus SFace (>= => meme identite ; "
+                         "recommandation OpenCV 0.363)")
+    ap.add_argument("--recog-lock-stable-s", type=float, default=2.0,
+                    help="age min du verrou de suivi (s) avant de tenter une "
+                         "reconnaissance (episode juge stable)")
+    ap.add_argument("--recog-min-ok", type=float, default=0.6,
+                    help="taux de reconnaissance holdout mini pour valider un lot a "
+                         "l'apprentissage")
+    ap.add_argument("--train-min-imgs", type=int, default=10,
+                    help="nb min d'images d'un lot unknown/<id_lot> pour l'enroler")
+    ap.add_argument("--acq-min-size", type=int, default=60,
+                    help="taille min (px, plus petit cote de la box) d'un visage a "
+                         "sauvegarder en acquisition (garde-fou qualite)")
+    ap.add_argument("--acq-min-sharp", type=float, default=40.0,
+                    help="nettete min (variance du Laplacien du crop) a l'acquisition "
+                         "(rejette les images floues)")
     # --- prediction de trajectoire (Kalman) : coast + anticipation ---
     ap.add_argument("--predict-mode", default="anticip",
                     choices=["off", "coast", "anticip"],

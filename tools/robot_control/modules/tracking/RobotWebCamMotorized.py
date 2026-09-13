@@ -93,6 +93,7 @@ class RobotWebCamMotorized:
         self._det_fps = 0.0
         self._seq = 0                 # incremente a chaque detection (P2)
         self._raw_box_full = None     # box detecteur brute (pleine res) pendant lock
+        self._landmarks_full = None   # 5 landmarks (pleine res) du visage principal, ou None
 
         self._stop = False
         self._worker = None
@@ -155,11 +156,13 @@ class RobotWebCamMotorized:
         st = self._det.state()
         with self._lock:
             raw_box = self._raw_box_full
+            landmarks = self._landmarks_full
             pred_nx, pred_ny = self._pred_nx, self._pred_ny
         return {"mode": st["mode"], "locked": st["locked"], "src": st["src"],
                 "score": st["score"], "raw_det": st["raw_det"],
                 "raw_box": raw_box, "unlock_reason": st["unlock_reason"],
                 "lock_id": st["lock_id"], "lock_age": st["lock_age"],
+                "landmarks": landmarks,
                 "predict": self._predict_phase, "predict_mode": self.predict_mode,
                 "pred_speed": self._pred_speed, "pred_err": self._pred_err,
                 "pred_nx": pred_nx, "pred_ny": pred_ny}
@@ -312,12 +315,21 @@ class RobotWebCamMotorized:
             main_s, faces_s = self._det.process(small, sw, sh)
 
             # box detecteur brute (pendant lock) remappee pleine res -> indicateur overlay
+            st = self._det.state()
             raw_full = None
-            raw_small = self._det.state()["raw_box"]
+            raw_small = st["raw_box"]
             if raw_small is not None:
                 rx, ry, rw, rh = raw_small
                 raw_full = (int(rx * scale), int(ry * scale),
                             int(rw * scale), int(rh * scale))
+
+            # 5 landmarks du visage principal (coords small) remappes pleine res :
+            # servent a l'ALIGNEMENT geometrique en reconnaissance (alignCrop).
+            lm_full = None
+            lm_small = st.get("landmarks")
+            if lm_small is not None:
+                lm_full = [(float(px * scale), float(py * scale))
+                           for (px, py) in lm_small]
 
             remapped = [(int(x * scale), int(y * scale),
                          int(w * scale), int(h * scale)) for (x, y, w, h) in faces_s]
@@ -357,6 +369,7 @@ class RobotWebCamMotorized:
                 self._area_pct = area_pct
                 self._det_fps = det_fps
                 self._raw_box_full = raw_full
+                self._landmarks_full = lm_full
                 self._predict_phase = phase
                 self._pred_speed = pspeed
                 self._pred_nx, self._pred_ny = pred_nx, pred_ny

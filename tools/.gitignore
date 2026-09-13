@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 
+# ancienne implementation de reference (analyse seule, non versionnee)
+Bambou4WD_V1-master/
+
 # telemetrie runtime de l'app (robot_control/lib/Telemetry.py + snapshots d'analyse)
 # les logs peuvent atterrir dans logs/ de n'importe quel paquet applicatif
 **/logs/robot_control.jsonl

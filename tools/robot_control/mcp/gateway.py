@@ -35,7 +35,8 @@ DEFAULT_PORT = 8787
 
 # Commandes de CONFIGURATION (n'ont de sens que si l'app tourne : elles pilotent le
 # suivi/vision, pas la carte). Les autres commandes sont des commandes CARTE.
-CONFIG_CMDS = {"set_detector", "set_track_mode", "set_predict_mode", "set_tracking"}
+CONFIG_CMDS = {"set_detector", "set_track_mode", "set_predict_mode", "set_tracking",
+               "set_recog_mode", "train_faces", "recognize_image", "acquire_image"}
 
 CAR_TYPE_LABELS = {
     0x01: "CAR_MECANUM", 0x02: "CAR_MECANUM_MAX", 0x03: "CAR_MECANUM_MINI",
@@ -53,6 +54,16 @@ def config_from(cmd, args):
         return {"predict_mode": (args.get("predict_mode") or "").strip().lower()}
     if cmd == "set_tracking":
         return {"active": bool(args.get("on"))}
+    # --- reconnaissance de visage (robot_controlv3, node reco) --------------
+    if cmd == "set_recog_mode":
+        return {"recog_mode": (args.get("mode") or "").strip().lower()}
+    if cmd == "train_faces":
+        return {"train": True}
+    if cmd == "recognize_image":
+        return {"recognize_image": (args.get("path") or "").strip()}
+    if cmd == "acquire_image":
+        return {"acquire_image": (args.get("path") or "").strip(),
+                "id_lot": (args.get("id_lot") or "").strip() or None}
     return {}
 
 
