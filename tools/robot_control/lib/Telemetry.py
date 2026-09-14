@@ -113,6 +113,36 @@ class Telemetry:
             if t - self._last_state_flush >= 1.0:
                 self._flush_state(t)
 
+    def set(self, name, value, cfg=None, level="info", targets=("mcp", "log")):
+        """Metrique nommee/typee gatee (framework metrique). No-op si cfg la coupe.
+
+        `name` = `<groupe>_<type>` (le groupe sert au gating). Ecrit un enregistrement
+        `metric` (name/value) journalise (log) et/ou reflete dans state.json (mcp)
+        selon les cibles autorisees par `cfg.enabled(groupe, cible)`. La cible « hmi »
+        est geree cote dessin, pas ici. Pas d'agregation : ecriture brute.
+        """
+        if not self.enabled:
+            return
+        group = name.rsplit("_", 1)[0] if "_" in name else name
+        want_log = "log" in targets and (cfg is None or cfg.enabled(group, "log"))
+        want_mcp = "mcp" in targets and (cfg is None or cfg.enabled(group, "mcp"))
+        if not want_log and not want_mcp:
+            return
+        t = time.time()
+        rec = {"t": round(t, 4), "type": "metric", "name": name, "value": value,
+               "level": level}
+        with self._lock:
+            self._counts["metric"] = self._counts.get("metric", 0) + 1
+            self._state["metric:" + name] = rec
+            if want_log:
+                try:
+                    self._write(rec)
+                    self._maybe_rotate()
+                except Exception:
+                    pass
+            if t - self._last_state_flush >= 1.0:
+                self._flush_state(t)
+
     def log_rx(self, sub, **fields):
         """Telemetrie carte haut debit : etat toujours a jour, ecriture throttlee."""
         if not self.enabled:

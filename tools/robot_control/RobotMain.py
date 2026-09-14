@@ -242,6 +242,10 @@ def parse_args():
     ap.add_argument("--log-budget-mb", type=float, default=10.0,
                     help="budget disque total du journal en Mo (fenetre glissante "
                          "= fichier vif + 1 backup ; defaut 10)")
+    ap.add_argument("--no-metric", action="append", metavar="SPEC", default=None,
+                    help="coupe une metrique (framework v3) : SPEC = <groupe|type> "
+                         "(ex. sensor, stm32_rps) ou <cible>:<groupe|type> "
+                         "(ex. hmi:stm32_rps). Repetable. Cibles : hmi/mcp/log.")
     # --- usage sans IHM (pilotage MCP par socket ; voir mcp/gateway.py) ---
     ap.add_argument("--headless", action="store_true",
                     help="sans fenetre ni clavier : garde capture + suivi + "

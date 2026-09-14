@@ -119,6 +119,13 @@ def t_set_tracking(args):
     return _config("set_tracking", {"on": bool(args.get("on"))})
 
 
+def t_set_metrics(args):
+    spec = (args.get("spec") or "").strip()
+    if not spec:
+        return "spec vide (ex. 'sensor', 'stm32_rps', 'hmi:stm32_rps')."
+    return _config("set_metrics", {"spec": spec, "on": bool(args.get("on"))})
+
+
 # --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
 def t_set_recog_mode(args):
     mode = (args.get("mode") or "").strip().lower()
@@ -240,6 +247,21 @@ TOOLS = [
                          "on": {"type": "boolean",
                                 "description": "true = armer le suivi, false = desarmer"}},
                      "required": ["on"]}},
+    {"name": "set_metrics",
+     "description": "Active/coupe une metrique du framework v3 A CHAUD (relais socket ; "
+                    "robot_controlv3). spec = <groupe|type> (toutes cibles) ou "
+                    "<cible>:<groupe|type>. Cibles : hmi (dessin HUD) / mcp (state.json) / "
+                    "log (jsonl). Types : perf/quality/sensor/state/actuator/link/event. "
+                    "Groupes : cam_fps, cam_detect, stm32_motor/servo/batt/imu/rps, "
+                    "grove_ultra/imu/irdist, recog_badge, train_log. Ex. couper les barres "
+                    "rps a l'ecran sans perdre la telemetrie : spec='hmi:stm32_rps', on=false.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "spec": {"type": "string",
+                                  "description": "<groupe|type> ou <cible>:<groupe|type>"},
+                         "on": {"type": "boolean",
+                                "description": "true = active, false = coupe"}},
+                     "required": ["spec", "on"]}},
 
     # --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
     {"name": "set_recog_mode",
@@ -432,6 +454,7 @@ HANDLERS = {
     "set_track_mode": t_set_track_mode,
     "set_predict_mode": t_set_predict_mode,
     "set_tracking": t_set_tracking,
+    "set_metrics": t_set_metrics,
     "set_recog_mode": t_set_recog_mode,
     "train_faces": t_train_faces,
     "recognize_image": t_recognize_image,

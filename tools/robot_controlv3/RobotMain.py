@@ -54,6 +54,7 @@ from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
 from robot_control.mcp import gateway
 
 from .roslite import Executor
+from .metrics import MetricsConfig
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
                     FaceRecogNode, FaceTrainNode)
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
@@ -156,7 +157,13 @@ def _row(frame, x, y, fields):
         _put(frame, x + dx, y, text, col)
 
 
-def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps, tstate):
+def _hmi(mcfg, group):
+    """Le groupe de metriques `group` doit-il etre dessine (cible HMI) ? (None = oui)."""
+    return mcfg is None or mcfg.enabled(group, "hmi")
+
+
+def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps,
+                   tstate, mcfg=None):
     """Carte CAM (haut-gauche) : source + etats suivi/detecteur/tracker + perf + pred."""
     present = bool(camnode.available)
     if present:
@@ -175,48 +182,56 @@ def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps, t
     pm = tstate.get("predict_mode", "off")
 
     lock_txt = f"ON({src})" if locked else "off"
-    _row(frame, x, yc, [
-        (10, "suivi", _C_LABEL), (78, "ON" if active else "off", _C_ON if active else _C_OFF),
-        (150, "det", _C_LABEL), (200, met.detector or "?", _C_VAL)])
-    _row(frame, x, yc + 19, [
-        (10, "trk", _C_LABEL), (78, trk, _C_VAL),
-        (150, "lock", _C_LABEL), (200, lock_txt, _C_ON if locked else _C_OFF)])
-    _row(frame, x, yc + 38, [
-        (10, "sc", _C_LABEL), (78, f"{sc:.2f}" if sc is not None else "--", _C_VAL),
-        (150, "det", _C_LABEL),
-        (200, ("hit" if rd else "miss") if (locked and rd is not None) else "--",
-         _C_ON if rd else _C_OFF)])
-    _row(frame, x, yc + 57, [
-        (10, "P1", _C_LABEL), (48, f"{p1_fps:4.0f}", _C_VAL),
-        (110, "P2", _C_LABEL), (148, f"{met.det_fps:4.0f}", _C_VAL),
-        (210, "vis", _C_LABEL), (258, f"{n_faces:d}", _C_VAL)])
-    if pm != "off":
-        v = tstate.get("pred_speed") or 0.0
-        err = tstate.get("pred_err")
-        _row(frame, x, yc + 76, [
-            (10, "pred", _C_LABEL), (78, pm, _C_VAL),
-            (150, "v", _C_LABEL), (172, f"{v:.2f}", _C_VAL),
-            (230, "err", _C_LABEL), (272, f"{err:.3f}" if err is not None else "--", _C_VAL)])
-    else:
-        _row(frame, x, yc + 76, [(10, "pred", _C_LABEL), (78, "off", _C_OFF)])
+    # --- etat detection/suivi (groupe cam_detect) ----------------------------
+    if _hmi(mcfg, "cam_detect"):
+        _row(frame, x, yc, [
+            (10, "suivi", _C_LABEL), (78, "ON" if active else "off", _C_ON if active else _C_OFF),
+            (150, "det", _C_LABEL), (200, met.detector or "?", _C_VAL)])
+        _row(frame, x, yc + 19, [
+            (10, "trk", _C_LABEL), (78, trk, _C_VAL),
+            (150, "lock", _C_LABEL), (200, lock_txt, _C_ON if locked else _C_OFF)])
+        _row(frame, x, yc + 38, [
+            (10, "sc", _C_LABEL), (78, f"{sc:.2f}" if sc is not None else "--", _C_VAL),
+            (150, "det", _C_LABEL),
+            (200, ("hit" if rd else "miss") if (locked and rd is not None) else "--",
+             _C_ON if rd else _C_OFF)])
+    # --- perf (groupe cam_fps) : P1/P2/vis ------------------------------------
+    if _hmi(mcfg, "cam_fps"):
+        _row(frame, x, yc + 57, [
+            (10, "P1", _C_LABEL), (48, f"{p1_fps:4.0f}", _C_VAL),
+            (110, "P2", _C_LABEL), (148, f"{met.det_fps:4.0f}", _C_VAL),
+            (210, "vis", _C_LABEL), (258, f"{n_faces:d}", _C_VAL)])
+    if _hmi(mcfg, "cam_detect"):
+        if pm != "off":
+            v = tstate.get("pred_speed") or 0.0
+            err = tstate.get("pred_err")
+            _row(frame, x, yc + 76, [
+                (10, "pred", _C_LABEL), (78, pm, _C_VAL),
+                (150, "v", _C_LABEL), (172, f"{v:.2f}", _C_VAL),
+                (230, "err", _C_LABEL), (272, f"{err:.3f}" if err is not None else "--", _C_VAL)])
+        else:
+            _row(frame, x, yc + 76, [(10, "pred", _C_LABEL), (78, "off", _C_OFF)])
 
-    # episode de suivi : id (handle pour une reconnaissance) + duree de vie (critere).
-    # Age vire au vert au-dela d'un seuil = episode assez stable pour identifier.
-    if locked:
-        lid = tstate.get("lock_id") or 0
-        age = tstate.get("lock_age") or 0.0
-        _row(frame, x, yc + 95, [
-            (10, "id", _C_LABEL), (48, f"#{lid}", _C_VAL),
-            (110, "age", _C_LABEL),
-            (150, f"{age:5.1f}s", _C_ON if age >= _LOCK_STABLE_S else _C_VAL)])
-    else:
-        _row(frame, x, yc + 95, [(10, "id", _C_LABEL), (48, "--", _C_OFF)])
+        # episode de suivi : id (handle pour une reconnaissance) + duree de vie (critere).
+        # Age vire au vert au-dela d'un seuil = episode assez stable pour identifier.
+        if locked:
+            lid = tstate.get("lock_id") or 0
+            age = tstate.get("lock_age") or 0.0
+            _row(frame, x, yc + 95, [
+                (10, "id", _C_LABEL), (48, f"#{lid}", _C_VAL),
+                (110, "age", _C_LABEL),
+                (150, f"{age:5.1f}s", _C_ON if age >= _LOCK_STABLE_S else _C_VAL)])
+        else:
+            _row(frame, x, yc + 95, [(10, "id", _C_LABEL), (48, "--", _C_OFF)])
 
 
-def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth):
-    """Carte STM32 (haut-droit) : etats moteurs/lissage + servos + fluidite + IMU carte."""
+def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
+                   mcfg=None):
+    """Carte STM32 (haut-droit) : etats moteurs/lissage + servos + fluidite + IMU carte
+    + vitesses de rotation moteurs (barres bipolaires). Chaque sous-bloc est dessine
+    seulement si son groupe de metriques est actif (cible HMI)."""
     port = f"{port_name} {'OK' if snap.get('ok') else '--'}"
-    yc = _card_frame(frame, x, y, 320, 141, "STM32", port, present, present)
+    yc = _card_frame(frame, x, y, 320, 212, "STM32", port, present, present)
 
     ms = pt.motionStats() or {}
     step_max = ms.get("step_max", 0.0)
@@ -227,65 +242,132 @@ def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth)
     def _ang(v):
         return f"{v:+6.1f}" if v is not None else "    --"
 
-    _row(frame, x, yc, [
-        (10, "moteurs", _C_LABEL), (98, "ON" if motion_on else "OFF",
-                                    _C_ON if motion_on else _C_OFF),
-        (170, "lissage", _C_LABEL), (258, "ON" if smooth else "off",
-                                     _C_ON if smooth else _C_OFF)])
-    _row(frame, x, yc + 19, [
-        (10, "pan  S1", _C_LABEL), (98, f"{pt.angleH:4.0f}deg", _C_VAL),
-        (170, "tilt S2", _C_LABEL), (258, f"{pt.angleV:4.0f}deg", _C_VAL)])
-    _row(frame, x, yc + 38, [
-        (10, "pas-max", _C_LABEL), (98, f"{step_max:4.1f}deg", mcol),
-        (170, "v", _C_LABEL), (258, f"{vmax:4.0f}deg/s", mcol)])
-    _row(frame, x, yc + 57, [
-        (10, "batt", _C_LABEL), (98, batt, _C_VAL)])
-    # IMU de la carte STM32 (attitude roll/pitch/yaw, trame 0x0C)
-    _row(frame, x, yc + 76, [
-        (10, "IMU roll", _C_LABEL), (95, _ang(snap.get("roll")), _C_IMU),
-        (170, "pitch", _C_LABEL), (228, _ang(snap.get("pitch")), _C_IMU)])
-    _row(frame, x, yc + 95, [
-        (10, "    yaw", _C_LABEL), (95, _ang(snap.get("yaw")), _C_IMU)])
+    if _hmi(mcfg, "stm32_motor"):
+        _row(frame, x, yc, [
+            (10, "moteurs", _C_LABEL), (98, "ON" if motion_on else "OFF",
+                                        _C_ON if motion_on else _C_OFF),
+            (170, "lissage", _C_LABEL), (258, "ON" if smooth else "off",
+                                         _C_ON if smooth else _C_OFF)])
+    if _hmi(mcfg, "stm32_servo"):
+        _row(frame, x, yc + 19, [
+            (10, "pan  S1", _C_LABEL), (98, f"{pt.angleH:4.0f}deg", _C_VAL),
+            (170, "tilt S2", _C_LABEL), (258, f"{pt.angleV:4.0f}deg", _C_VAL)])
+        _row(frame, x, yc + 38, [
+            (10, "pas-max", _C_LABEL), (98, f"{step_max:4.1f}deg", mcol),
+            (170, "v", _C_LABEL), (258, f"{vmax:4.0f}deg/s", mcol)])
+    if _hmi(mcfg, "stm32_batt"):
+        _row(frame, x, yc + 57, [
+            (10, "batt", _C_LABEL), (98, batt, _C_VAL)])
+    if _hmi(mcfg, "stm32_imu"):
+        # IMU de la carte STM32 (attitude roll/pitch/yaw, trame 0x0C)
+        _row(frame, x, yc + 76, [
+            (10, "IMU roll", _C_LABEL), (95, _ang(snap.get("roll")), _C_IMU),
+            (170, "pitch", _C_LABEL), (228, _ang(snap.get("pitch")), _C_IMU)])
+        _row(frame, x, yc + 95, [
+            (10, "    yaw", _C_LABEL), (95, _ang(snap.get("yaw")), _C_IMU)])
+    if _hmi(mcfg, "stm32_rps"):
+        _draw_rps_bars(frame, x + 10, yc + 112, snap.get("rps"))
 
 
-def _draw_grove_card(frame, x, y, port_name, gp):
-    """Carte GROVE (bas-gauche) : 4 ultrasons (mm + barre) + IMU roll/pitch + bruts."""
+def _draw_rps_bars(frame, x, y, rps):
+    """4 barres BIPOLAIRES de vitesse de rotation (tours/s) : 0 au CENTRE, remplissage
+    a DROITE si rps>0 (avant, vert) / a GAUCHE si rps<0 (arriere, orange). Echelle
+    commune normalisee sur max(|rps|) des moteurs VALIDES (M1/M3/M4) avec plancher.
+    M2 = encodeur HS (voir bamboo-v4-hardware-faults) : barre PLEINE grise + « HS »."""
+    _put(frame, x, y, "rot t/s", _C_LABEL, 0.42, 1)
+    bx, bw = x + 24, 210
+    cxb = bx + bw // 2
+    half = bw // 2
+    # echelle commune : max |rps| des moteurs valides (indices 0,2,3), plancher 0.5 t/s
+    if rps is not None:
+        live = [abs(rps[i]) for i in (0, 2, 3) if i < len(rps) and rps[i] is not None]
+        scale = max(0.5, max(live) if live else 0.5)
+    else:
+        scale = 0.5
+    for i in range(4):
+        ry = y + 14 + i * 14
+        top, bot = ry - 9, ry - 2
+        _put(frame, x, ry, "M%d" % (i + 1), _C_LABEL, 0.42, 1)
+        cv2.rectangle(frame, (bx, top), (bx + bw, bot), (60, 60, 60), 1)   # rail
+        cv2.line(frame, (cxb, top), (cxb, bot), (90, 90, 90), 1)           # repere 0
+        if i == 1:                                   # M2 : encodeur mort -> HS
+            cv2.rectangle(frame, (bx, top), (bx + bw, bot), (90, 90, 90), -1)
+            _put(frame, bx + bw + 8, ry, "HS", _C_OFF, 0.42, 1)
+            continue
+        v = rps[i] if (rps is not None and i < len(rps) and rps[i] is not None) else None
+        if v is None:
+            _put(frame, bx + bw + 8, ry, "  --", _C_OFF, 0.42, 1)
+            continue
+        frac = max(-1.0, min(1.0, v / scale))
+        fl = int(half * abs(frac))
+        if fl > 0:
+            col = (0, 210, 0) if frac >= 0 else (0, 165, 255)   # vert=avant / orange=arriere
+            if frac >= 0:
+                cv2.rectangle(frame, (cxb, top), (cxb + fl, bot), col, -1)
+            else:
+                cv2.rectangle(frame, (cxb - fl, top), (cxb, bot), col, -1)
+        _put(frame, bx + bw + 8, ry, "%+5.2f" % v, _C_VAL, 0.42, 1)
+
+
+def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
+    """Carte GROVE (bas-droit) : 4 ultrasons (mm + barre) + IMU roll/pitch + bruts +
+    telemetre IR (distance + barre de proximite). Sous-blocs gates par groupe (HMI)."""
     present = bool(gp is not None and gp.connected)
     fresh = bool(present and gp.ultra_age is not None and gp.ultra_age < 1.5)
     ver = (gp.version if (gp and gp.version) else "") if present else ""
     port = f"{port_name} {ver}".strip() if present else "absente"
-    yc = _card_frame(frame, x, y, 320, 122, "GROVE", port, present, fresh)
+    yc = _card_frame(frame, x, y, 320, 146, "GROVE", port, present, fresh)
 
-    # --- ultrasons : 2x2, valeur mm (largeur fixe) + barre de proximite -------
-    ultra = gp.ultra if present else [None, None, None, None]
-    for i, d in enumerate(ultra):
-        cx = x + 10 + (i % 2) * 160
-        cy = yc + (i // 2) * 22
+    if _hmi(mcfg, "grove_ultra"):
+        # --- ultrasons : 2x2, valeur mm (largeur fixe) + barre de proximite ---
+        ultra = gp.ultra if present else [None, None, None, None]
+        for i, d in enumerate(ultra):
+            cx = x + 10 + (i % 2) * 160
+            cy = yc + (i // 2) * 22
+            if d is None:
+                txt, col, fill = "  --", _C_OFF, 0
+            else:
+                f = max(0.0, min(1.0, (d - 300) / 1200.0))     # 0=proche 1=loin
+                col = (0, int(80 + 140 * f), int(220 - 140 * f))
+                txt = f"{d:4d}"
+                fill = int(46 * (1.0 - f))
+            _put(frame, cx, cy, f"S{i}", _C_LABEL)
+            _put(frame, cx + 28, cy, f"{txt}mm", col)
+            bx = cx + 100
+            cv2.rectangle(frame, (bx, cy - 9), (bx + 46, cy - 3), (60, 60, 60), 1)
+            if fill > 0:
+                cv2.rectangle(frame, (bx, cy - 9), (bx + fill, cy - 3), col, -1)
+
+    if _hmi(mcfg, "grove_imu"):
+        # --- IMU : roll/pitch fusionnes + accel/gyro bruts --------------------
+        iy = yc + 48
+        roll = f"{gp.roll:+7.1f}" if (present and gp.roll is not None) else "     --"
+        pitch = f"{gp.pitch:+7.1f}" if (present and gp.pitch is not None) else "     --"
+        _row(frame, x, iy, [
+            (10, "IMU roll", _C_LABEL), (95, roll, _C_IMU),
+            (185, "pitch", _C_LABEL), (245, pitch, _C_IMU)])
+        a = ("%5d %5d %5d" % gp.accel) if (present and gp.accel is not None) else "--"
+        g = ("%5d %5d %5d" % gp.gyro) if (present and gp.gyro is not None) else "--"
+        _row(frame, x, iy + 19, [(10, "brut a", _C_LABEL), (72, a, _C_LABEL)])
+        _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
+
+    if _hmi(mcfg, "grove_irdist"):
+        # --- telemetre IR Sharp : distance seule + barre de proximite ---------
+        iry = yc + 105
+        d = gp.ir_dist if present else None
         if d is None:
             txt, col, fill = "  --", _C_OFF, 0
         else:
-            f = max(0.0, min(1.0, (d - 300) / 1200.0))     # 0=proche 1=loin
+            f = max(0.0, min(1.0, (d - 100) / 600.0))      # 0=proche 1=loin
             col = (0, int(80 + 140 * f), int(220 - 140 * f))
             txt = f"{d:4d}"
             fill = int(46 * (1.0 - f))
-        _put(frame, cx, cy, f"S{i}", _C_LABEL)
-        _put(frame, cx + 28, cy, f"{txt}mm", col)
-        bx = cx + 100
-        cv2.rectangle(frame, (bx, cy - 9), (bx + 46, cy - 3), (60, 60, 60), 1)
+        _put(frame, x + 10, iry, "IR", _C_LABEL)
+        _put(frame, x + 38, iry, f"{txt}mm", col)
+        bx = x + 110
+        cv2.rectangle(frame, (bx, iry - 9), (bx + 46, iry - 3), (60, 60, 60), 1)
         if fill > 0:
-            cv2.rectangle(frame, (bx, cy - 9), (bx + fill, cy - 3), col, -1)
-
-    # --- IMU : roll/pitch fusionnes + accel/gyro bruts ------------------------
-    iy = yc + 48
-    roll = f"{gp.roll:+7.1f}" if (present and gp.roll is not None) else "     --"
-    pitch = f"{gp.pitch:+7.1f}" if (present and gp.pitch is not None) else "     --"
-    _row(frame, x, iy, [
-        (10, "IMU roll", _C_LABEL), (95, roll, _C_IMU),
-        (185, "pitch", _C_LABEL), (245, pitch, _C_IMU)])
-    a = ("%5d %5d %5d" % gp.accel) if (present and gp.accel is not None) else "--"
-    g = ("%5d %5d %5d" % gp.gyro) if (present and gp.gyro is not None) else "--"
-    _row(frame, x, iy + 19, [(10, "brut a", _C_LABEL), (72, a, _C_LABEL)])
-    _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
+            cv2.rectangle(frame, (bx, iry - 9), (bx + fill, iry - 3), col, -1)
 
 
 def _draw_recog_badge(frame, recog, x=8, y=176, w=320):
@@ -341,7 +423,7 @@ def _draw_train_log(frame, tr):
         return
     fw, fh = frame.shape[1], frame.shape[0]
     m, w, lh = 8, 380, 15
-    band_top, band_bot = 152, fh - 134          # entre STM32 (haut-D) et GROVE (bas-D)
+    band_top, band_bot = 226, fh - 158          # entre STM32 (haut-D) et GROVE (bas-D)
     avail = max(60, band_bot - band_top)
     maxlines = max(3, min(12, (avail - 46) // lh))
     show = lines[-maxlines:]
@@ -470,7 +552,7 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
-                    key_flash=None, btn_accent=None):
+                    key_flash=None, btn_accent=None, mcfg=None):
     """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
 
     CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
@@ -479,10 +561,11 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
     `key_flash` = index de boutons a eclairer (touches recemment pressees)."""
     fw, fh = frame.shape[1], frame.shape[0]
     m = 8
-    _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps, tstate)
+    _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps,
+                   tstate, mcfg=mcfg)
     _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
-                   motion_on, smooth)
-    _draw_grove_card(frame, fw - 320 - m, fh - 122 - m, gp_port, gp)
+                   motion_on, smooth, mcfg=mcfg)
+    _draw_grove_card(frame, fw - 320 - m, fh - 146 - m, gp_port, gp, mcfg=mcfg)
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
                       getattr(pt, "deadzone", None), accent=btn_accent)
 
@@ -525,6 +608,7 @@ class RobotControlCore:
         self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.train = None                        # node dedie a l'apprentissage (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
+        self.mcfg = None                         # config metriques (HMI/MCP/log), cf. setup()
 
         # --- etat de boucle cote Core (HMI/clavier/MCP), comme l'ancien app -----
         self.active = False          # suivi arme (touche F) -> publie sur /tracking/config
@@ -547,6 +631,10 @@ class RobotControlCore:
     # -----------------------------------------------------------------------
     def setup(self):
         args = self.args
+        # 0) banniere version (TOT : avant l'ouverture camera => precede « Camera index »)
+        print(f"App robot_control v{APP_VERSION}")
+        # config des metriques (HMI/MCP/log) : coupures issues de --no-metric
+        self.mcfg = MetricsConfig().parse_no_metric(getattr(args, "no_metric", None))
         # 1) telemetrie (journal structure ; budget = fichier vif + 1 backup)
         self.tel = Telemetry(log_dir=args.log_dir, enabled=not args.no_telemetry,
                              max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2),
@@ -634,12 +722,16 @@ class RobotControlCore:
     # Journalisation par NOUVELLE detection (event detect + transition verrou)
     # -----------------------------------------------------------------------
     def _log_detection(self, res: TrackingResult):
-        """Reprend le journal per-seq de l'ancien _on_new_detection (analyse/MCP)."""
+        """Reprend le journal per-seq de l'ancien _on_new_detection (analyse/MCP).
+        L'enregistrement `detect` releve du groupe metrique `cam_detect` : coupe si
+        ce groupe est desactive pour MCP et log (les transitions de verrou restent)."""
         tstate = res.tstate
         score = tstate.get("score")
         pspeed = tstate.get("pred_speed")
         perr = tstate.get("pred_err")
-        self.tel.log("detect", seq=res.seq, faces=len(res.faces),
+        mc = self.mcfg
+        if mc is None or mc.enabled("cam_detect", "mcp") or mc.enabled("cam_detect", "log"):
+            self.tel.log("detect", seq=res.seq, faces=len(res.faces),
                      nx=None if res.nx is None else round(res.nx, 4),
                      ny=None if res.ny is None else round(res.ny, 4),
                      area=round(res.area_pct, 2), det_fps=round(res.det_fps, 1),
@@ -669,9 +761,16 @@ class RobotControlCore:
         """Applique une commande de config MCP recue par socket (gateway.drain).
 
         cfg (gateway.config_from) porte UNE cle : detector / track_mode /
-        predict_mode / active -> publiee sur /tracking/config (appliquee au spin
-        suivant). Renvoie un compte-rendu texte pour le client MCP.
+        predict_mode / active / metrics -> publiee sur /tracking/config (appliquee
+        au spin suivant). Renvoie un compte-rendu texte pour le client MCP.
         """
+        # --- metriques (HMI/MCP/log) : applicable meme en --board-only ----------
+        if "metrics" in cfg and self.mcfg is not None:
+            m = cfg["metrics"]                   # {"spec": ..., "on": bool}
+            ok, msg = self.mcfg.apply(m.get("spec", ""), bool(m.get("on", False)))
+            self.tel.log("event", msg="set_metrics", spec=m.get("spec"),
+                         on=bool(m.get("on")), ok=ok)
+            return "Metrique : %s" % msg
         if self.tracking is None:                # --board-only : pas de node suivi
             return "Vision desactivee (--board-only) : commande de suivi ignoree."
         d = cfg.get("detector")
@@ -840,11 +939,19 @@ class RobotControlCore:
             now2 = time.time()
             if now2 - self._hb_t0 >= 2.0:
                 self._hb_t0 = now2
+                rps = snap.get("rps")
                 self.tel.log("heartbeat", connected=self.link.connected,
                              batt=snap.get("battery"), yaw=snap.get("yaw"),
-                             ok=snap.get("ok"), bad=snap.get("bad"),
+                             ok=snap.get("ok"), bad=snap.get("bad"), rps=rps,
                              grove=None if gp is None else gp.connected,
                              grove_ultra=None if gp is None else gp.ultra)
+                if rps is not None:
+                    self.tel.set("stm32_rps_sensor", rps, cfg=self.mcfg)
+                if gp is not None and gp.ir_dist is not None:
+                    self.tel.set("grove_irdist_sensor",
+                                 {"dist": gp.ir_dist, "adc": gp.ir_adc,
+                                  "age": None if gp.ir_age is None else round(gp.ir_age, 2)},
+                                 cfg=self.mcfg)
             time.sleep(0.02)
 
     def _loop(self):
@@ -925,13 +1032,16 @@ class RobotControlCore:
             _draw_hud_cards(frame, cam_ok, self.camera, self.link, self.args.port,
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
-                            self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent)
-            _draw_recog_badge(frame, recog)     # nom/id_pred + score + mode reco
+                            self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent,
+                            mcfg=self.mcfg)
+            if _hmi(self.mcfg, "recog_badge"):
+                _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge
             _put(frame, 8, frame.shape[0] - 8, "v" + APP_VERSION, _C_TITLE_OFF, 0.4)
             # panneau log d'apprentissage : pendant le batch, puis ~20 s apres
-            if tr is not None and (train_running
-                                   or (self._train_done_t and now - self._train_done_t < 20.0)):
+            if (_hmi(self.mcfg, "train_log") and tr is not None
+                    and (train_running
+                         or (self._train_done_t and now - self._train_done_t < 20.0))):
                 _draw_train_log(frame, tr)
             if not self.headless:
                 cv2.imshow(self.win, frame)      # fenetre coupee en --headless
@@ -963,13 +1073,19 @@ class RobotControlCore:
                 self.moving = False
 
     def _maybe_heartbeat(self, snap, tstate, det_fps, pt, gp=None):
-        """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi, capteurs)."""
+        """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi, capteurs).
+
+        Le record `heartbeat` (vue de synthese historique) est conserve tel quel pour
+        le MCP `status`. Les metriques NOUVELLES du framework (rps moteurs, telemetre
+        IR) sont en plus emises comme metriques nommees/typees gatees par groupe."""
         now2 = time.time()
         if now2 - self._hb_t0 < 2.0:
             return
         self._hb_t0 = now2
+        mc = self.mcfg
         hb_score = tstate.get("score")
         ms = pt.motionStats()
+        rps = snap.get("rps")
         self.tel.log("heartbeat", disp_fps=round(self.disp_fps, 1),
                      det_fps=round(det_fps, 1), tracking=self.active,
                      pan=round(pt.angleH, 1), tilt=round(pt.angleV, 1),
@@ -981,10 +1097,19 @@ class RobotControlCore:
                      lock_age=round(tstate.get("lock_age", 0.0), 2),
                      score=None if hb_score is None else round(hb_score, 3),
                      step_max=round(ms.get("step_max", 0.0), 2) if ms else 0.0,
+                     rps=rps,
                      grove=None if gp is None else gp.connected,
                      grove_ultra=None if gp is None else gp.ultra,
                      grove_roll=None if gp is None else gp.roll,
                      grove_pitch=None if gp is None else gp.pitch)
+        # --- metriques nommees/typees (framework) : gatees par groupe (mcp/log) ---
+        if rps is not None:
+            self.tel.set("stm32_rps_sensor", rps, cfg=mc)
+        if gp is not None and gp.ir_dist is not None:
+            self.tel.set("grove_irdist_sensor",
+                         {"dist": gp.ir_dist, "adc": gp.ir_adc,
+                          "age": None if gp.ir_age is None else round(gp.ir_age, 2)},
+                         cfg=mc)
 
     def _shutdown(self):
         """Arret propre : serveur MCP, moteurs coupes, nodes/camera, journaux."""
@@ -1008,9 +1133,10 @@ class RobotControlCore:
 def _board_snap(board):
     """BoardTelemetry (topic) -> dict attendu par les helpers d'overlay/heartbeat."""
     if board is None:
-        return {"battery": None, "yaw": None, "roll": None, "pitch": None, "ok": 0, "bad": 0}
+        return {"battery": None, "yaw": None, "roll": None, "pitch": None,
+                "rps": None, "ok": 0, "bad": 0}
     return {"battery": board.battery, "yaw": board.yaw, "roll": board.roll,
-            "pitch": board.pitch, "ok": board.ok, "bad": board.bad}
+            "pitch": board.pitch, "rps": board.rps, "ok": board.ok, "bad": board.bad}
 
 
 def main():

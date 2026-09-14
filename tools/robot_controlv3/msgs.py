@@ -156,7 +156,9 @@ class BoardTelemetry:
     vx: float = 0.0
     vy: float = 0.0
     vz: float = 0.0
-    encoders: Optional[list] = None
+    # Vitesse de rotation par moteur (tours/s = tics/s / cpr), None si historique
+    # insuffisant. Remplace l'ancien comptage cumulatif `encoders` (peu parlant).
+    rps: Optional[list] = None
     ok: int = 0
     bad: int = 0
 
