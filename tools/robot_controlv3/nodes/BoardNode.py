@@ -25,12 +25,13 @@ class BoardNode(Node):
     def process(self):
         """Publie une copie coherente des dernieres metriques carte."""
         snap = self.link.snapshot()
-        # Vitesse de rotation par moteur : tics/s (fenetre glissante enc_hist) / cpr.
+        # Vitesse de rotation par moteur en tours/MINUTE : tics/s (fenetre glissante
+        # enc_hist) / cpr * 60.
         sp = self.link.encSpeed()
         cpr = self.link.cpr or 1320.0
-        rps = None if sp is None else [round(s / cpr, 3) for s in sp]
+        rpm = None if sp is None else [round(s / cpr * 60.0, 1) for s in sp]
         self._out.set(BoardTelemetry(
             battery=snap.get("battery"), yaw=snap.get("yaw"),
             roll=snap.get("roll"), pitch=snap.get("pitch"),
             vx=snap.get("vx", 0.0), vy=snap.get("vy", 0.0), vz=snap.get("vz", 0.0),
-            rps=rps, ok=snap.get("ok", 0), bad=snap.get("bad", 0)))
+            rpm=rpm, ok=snap.get("ok", 0), bad=snap.get("bad", 0)))

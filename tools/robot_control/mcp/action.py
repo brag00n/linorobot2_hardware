@@ -122,7 +122,7 @@ def t_set_tracking(args):
 def t_set_metrics(args):
     spec = (args.get("spec") or "").strip()
     if not spec:
-        return "spec vide (ex. 'sensor', 'stm32_rps', 'hmi:stm32_rps')."
+        return "spec vide (ex. 'sensor', 'stm32_rpm', 'hmi:stm32_rpm')."
     return _config("set_metrics", {"spec": spec, "on": bool(args.get("on"))})
 
 
@@ -252,9 +252,9 @@ TOOLS = [
                     "robot_controlv3). spec = <groupe|type> (toutes cibles) ou "
                     "<cible>:<groupe|type>. Cibles : hmi (dessin HUD) / mcp (state.json) / "
                     "log (jsonl). Types : perf/quality/sensor/state/actuator/link/event. "
-                    "Groupes : cam_fps, cam_detect, stm32_motor/servo/batt/imu/rps, "
+                    "Groupes : cam_fps, cam_detect, stm32_motor/servo/batt/imu/rpm, "
                     "grove_ultra/imu/irdist, recog_badge, train_log. Ex. couper les barres "
-                    "rps a l'ecran sans perdre la telemetrie : spec='hmi:stm32_rps', on=false.",
+                    "rpm a l'ecran sans perdre la telemetrie : spec='hmi:stm32_rpm', on=false.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "spec": {"type": "string",

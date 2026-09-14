@@ -8,7 +8,7 @@ Modele (volontairement SANS agregation : moyenner/fenetrer sur le thread P1 cout
 du FPS, a contre-emploi ; l'agregation vit cote consommateur - encSpeed, MCP analyze) :
 
   - NOMMAGE  : chaque metrique appartient a un GROUPE `<source>_<domaine>` (ex.
-               stm32_rps, grove_irdist) lui-meme TYPE (perf/quality/sensor/state/
+               stm32_rpm, grove_irdist) lui-meme TYPE (perf/quality/sensor/state/
                actuator/link/event). Le nom journalise est `<groupe>_<type>`.
   - NIVEAU   : off < info < debug. Chaque groupe a un niveau requis (info par defaut) ;
                une cible sous ce niveau n'affiche/ne journalise pas.
@@ -24,7 +24,7 @@ LEVELS = {"off": 0, "info": 1, "debug": 2}
 TARGETS = ("hmi", "mcp", "log")
 
 # Registre des groupes connus : nom -> (type, niveau_requis). Couvre l'existant migre
-# + les nouveautes (stm32_rps, grove_irdist). Un groupe absent d'ici est traite en
+# + les nouveautes (stm32_rpm, grove_irdist). Un groupe absent d'ici est traite en
 # `info`/type inconnu (jamais bloquant : enabled() renvoie True par defaut).
 REGISTRY = {
     "cam_fps":       ("perf",     "info"),
@@ -33,7 +33,7 @@ REGISTRY = {
     "stm32_servo":   ("actuator", "info"),
     "stm32_batt":    ("link",     "info"),
     "stm32_imu":     ("sensor",   "info"),
-    "stm32_rps":     ("sensor",   "info"),
+    "stm32_rpm":     ("sensor",   "info"),
     "grove_ultra":   ("sensor",   "info"),
     "grove_imu":     ("sensor",   "info"),
     "grove_irdist":  ("sensor",   "info"),

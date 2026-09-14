@@ -266,25 +266,25 @@ def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
             (170, "pitch", _C_LABEL), (228, _ang(snap.get("pitch")), _C_IMU)])
         _row(frame, x, yc + 95, [
             (10, "    yaw", _C_LABEL), (95, _ang(snap.get("yaw")), _C_IMU)])
-    if _hmi(mcfg, "stm32_rps"):
-        _draw_rps_bars(frame, x + 10, yc + 112, snap.get("rps"))
+    if _hmi(mcfg, "stm32_rpm"):
+        _draw_rpm_bars(frame, x + 10, yc + 112, snap.get("rpm"))
 
 
-def _draw_rps_bars(frame, x, y, rps):
-    """4 barres BIPOLAIRES de vitesse de rotation (tours/s) : 0 au CENTRE, remplissage
-    a DROITE si rps>0 (avant, vert) / a GAUCHE si rps<0 (arriere, orange). Echelle
-    commune normalisee sur max(|rps|) des moteurs VALIDES (M1/M3/M4) avec plancher.
-    M2 = encodeur HS (voir bamboo-v4-hardware-faults) : barre PLEINE grise + « HS »."""
-    _put(frame, x, y, "rot t/s", _C_LABEL, 0.42, 1)
+def _draw_rpm_bars(frame, x, y, rpm):
+    """4 barres BIPOLAIRES de vitesse de rotation (tours/MINUTE) : 0 au CENTRE,
+    remplissage a DROITE si rpm>0 (avant, vert) / a GAUCHE si rpm<0 (arriere, orange).
+    Echelle commune normalisee sur max(|rpm|) des moteurs VALIDES (M1/M3/M4) avec
+    plancher. M2 = encodeur HS (bamboo-v4-hardware-faults) : barre PLEINE grise + « HS »."""
+    _put(frame, x, y, "rpm", _C_LABEL, 0.42, 1)
     bx, bw = x + 24, 210
     cxb = bx + bw // 2
     half = bw // 2
-    # echelle commune : max |rps| des moteurs valides (indices 0,2,3), plancher 0.5 t/s
-    if rps is not None:
-        live = [abs(rps[i]) for i in (0, 2, 3) if i < len(rps) and rps[i] is not None]
-        scale = max(0.5, max(live) if live else 0.5)
+    # echelle commune : max |rpm| des moteurs valides (indices 0,2,3), plancher 30 rpm
+    if rpm is not None:
+        live = [abs(rpm[i]) for i in (0, 2, 3) if i < len(rpm) and rpm[i] is not None]
+        scale = max(30.0, max(live) if live else 30.0)
     else:
-        scale = 0.5
+        scale = 30.0
     for i in range(4):
         ry = y + 14 + i * 14
         top, bot = ry - 9, ry - 2
@@ -295,7 +295,7 @@ def _draw_rps_bars(frame, x, y, rps):
             cv2.rectangle(frame, (bx, top), (bx + bw, bot), (90, 90, 90), -1)
             _put(frame, bx + bw + 8, ry, "HS", _C_OFF, 0.42, 1)
             continue
-        v = rps[i] if (rps is not None and i < len(rps) and rps[i] is not None) else None
+        v = rpm[i] if (rpm is not None and i < len(rpm) and rpm[i] is not None) else None
         if v is None:
             _put(frame, bx + bw + 8, ry, "  --", _C_OFF, 0.42, 1)
             continue
@@ -307,7 +307,7 @@ def _draw_rps_bars(frame, x, y, rps):
                 cv2.rectangle(frame, (cxb, top), (cxb + fl, bot), col, -1)
             else:
                 cv2.rectangle(frame, (cxb - fl, top), (cxb, bot), col, -1)
-        _put(frame, bx + bw + 8, ry, "%+5.2f" % v, _C_VAL, 0.42, 1)
+        _put(frame, bx + bw + 8, ry, "%+5.0f" % v, _C_VAL, 0.42, 1)
 
 
 def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
@@ -969,14 +969,14 @@ class RobotControlCore:
             now2 = time.time()
             if now2 - self._hb_t0 >= 2.0:
                 self._hb_t0 = now2
-                rps = snap.get("rps")
+                rpm = snap.get("rpm")
                 self.tel.log("heartbeat", connected=self.link.connected,
                              batt=snap.get("battery"), yaw=snap.get("yaw"),
-                             ok=snap.get("ok"), bad=snap.get("bad"), rps=rps,
+                             ok=snap.get("ok"), bad=snap.get("bad"), rpm=rpm,
                              grove=None if gp is None else gp.connected,
                              grove_ultra=None if gp is None else gp.ultra)
-                if rps is not None:
-                    self.tel.set("stm32_rps_sensor", rps, cfg=self.mcfg)
+                if rpm is not None:
+                    self.tel.set("stm32_rpm_sensor", rpm, cfg=self.mcfg)
                 if gp is not None and gp.ir_dist is not None:
                     self.tel.set("grove_irdist_sensor",
                                  {"dist": gp.ir_dist, "adc": gp.ir_adc,
@@ -1108,7 +1108,7 @@ class RobotControlCore:
         """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi, capteurs).
 
         Le record `heartbeat` (vue de synthese historique) est conserve tel quel pour
-        le MCP `status`. Les metriques NOUVELLES du framework (rps moteurs, telemetre
+        le MCP `status`. Les metriques NOUVELLES du framework (rpm moteurs, telemetre
         IR) sont en plus emises comme metriques nommees/typees gatees par groupe."""
         now2 = time.time()
         if now2 - self._hb_t0 < 2.0:
@@ -1117,7 +1117,7 @@ class RobotControlCore:
         mc = self.mcfg
         hb_score = tstate.get("score")
         ms = pt.motionStats()
-        rps = snap.get("rps")
+        rpm = snap.get("rpm")
         self.tel.log("heartbeat", disp_fps=round(self.disp_fps, 1),
                      det_fps=round(det_fps, 1), tracking=self.active,
                      pan=round(pt.angleH, 1), tilt=round(pt.angleV, 1),
@@ -1129,14 +1129,14 @@ class RobotControlCore:
                      lock_age=round(tstate.get("lock_age", 0.0), 2),
                      score=None if hb_score is None else round(hb_score, 3),
                      step_max=round(ms.get("step_max", 0.0), 2) if ms else 0.0,
-                     rps=rps,
+                     rpm=rpm,
                      grove=None if gp is None else gp.connected,
                      grove_ultra=None if gp is None else gp.ultra,
                      grove_roll=None if gp is None else gp.roll,
                      grove_pitch=None if gp is None else gp.pitch)
         # --- metriques nommees/typees (framework) : gatees par groupe (mcp/log) ---
-        if rps is not None:
-            self.tel.set("stm32_rps_sensor", rps, cfg=mc)
+        if rpm is not None:
+            self.tel.set("stm32_rpm_sensor", rpm, cfg=mc)
         if gp is not None and gp.ir_dist is not None:
             self.tel.set("grove_irdist_sensor",
                          {"dist": gp.ir_dist, "adc": gp.ir_adc,
@@ -1166,9 +1166,9 @@ def _board_snap(board):
     """BoardTelemetry (topic) -> dict attendu par les helpers d'overlay/heartbeat."""
     if board is None:
         return {"battery": None, "yaw": None, "roll": None, "pitch": None,
-                "rps": None, "ok": 0, "bad": 0}
+                "rpm": None, "ok": 0, "bad": 0}
     return {"battery": board.battery, "yaw": board.yaw, "roll": board.roll,
-            "pitch": board.pitch, "rps": board.rps, "ok": board.ok, "bad": board.bad}
+            "pitch": board.pitch, "rpm": board.rpm, "ok": board.ok, "bad": board.bad}
 
 
 def main():
