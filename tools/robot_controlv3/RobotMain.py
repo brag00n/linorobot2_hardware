@@ -29,8 +29,9 @@ Lancement depuis le dossier tools/ :
   ... --board-only    # pur pilote COM4 (BoardNode seul ; force headless)
 (l'app monolithique de reference reste lancable : -m robot_control.RobotMain ...)
 
-Clavier : identique a robot_control (Z/S/Q/D moteurs, fleches pan/tilt, C centre,
-F suivi, M detecteur, T tracker, P prediction, 0-9 vitesse, Espace STOP, Echap).
+Clavier : O active/coupe les moteurs (securite), fleches = moteurs (haut/bas avance/
+recule, gauche/droite rotation), Maj+fleches = camera pan/tilt, C centre, Page-Up/Down =
+vitesse 0-9, Espace STOP, F suivi, M detecteur, T tracker, P prediction, R reco, Echap.
 """
 import os
 import time
@@ -43,8 +44,8 @@ import numpy as np
 from robot_control.RobotMain import (
     parse_args,
     _overlay_detections, _overlay_main_marker, _overlay_reticle, _overlay_prediction,
-    MOVE_WATCHDOG_S, KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN, SERVO_STEP,
-    TARGET_STEP, clamp_target,
+    MOVE_WATCHDOG_S, KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN,
+    KEYS_PGUP, KEYS_PGDN, SERVO_STEP, TARGET_STEP, clamp_target,
 )
 from robot_control.lib.Telemetry import Telemetry
 from robot_control.version import APP_VERSION
@@ -458,42 +459,54 @@ def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
 # porte un index STABLE (voir _help_btn_for_key) ; il s'eclaire a la pression de sa
 # touche. Groupes = colonnes empilees, alignees en bas a gauche.
 _HELP_GROUPS = [
-    ("MOTION", [(0, "Z/S", "avance"), (1, "Q/D", "rotation"),
-                (2, "Espace", "STOP"), (9, "0-9", "vitesse")]),
-    ("SUIVI", [(3, "Fleches", "pan/tilt"), (4, "C", "centre"),
-               (5, "F", "suivi"), (6, "M", "detecteur"),
+    ("MOTION", [(16, "O", "moteurs"), (0, "Fleches", "direction"),
+                (2, "Espace", "STOP"), (9, "PgU/D", "vitesse")]),
+    ("CAMERA", [(3, "Maj+Fl", "pan/tilt"), (4, "C", "centre"), (11, "V", "cam"),
+                (12, "+/-", "cible")]),
+    ("SUIVI", [(5, "F", "suivi"), (6, "M", "detecteur"),
                (7, "T", "tracker"), (8, "P", "prediction")]),
     ("RECO", [(13, "R", "reco"), (15, "A", "acquis."), (14, "G", "apprend.")]),
-    ("SYSTEME", [(11, "V", "cam"), (12, "+/-", "cible"), (10, "Echap", "quitter")]),
+    ("SYSTEME", [(10, "Echap", "quitter")]),
 ]
 _BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
 _BTN_TARGET = 12                     # index du bouton taille de surface cible (+/-)
+_BTN_SPEED = 9                       # index du bouton vitesse moteur (Page-Up/Down)
+
+
+def _shift_down():
+    """True si Maj (Shift) est enfonce a l'instant. Sous Windows on interroge
+    GetKeyState(VK_SHIFT) : cv2.waitKeyEx ne remonte pas l'etat des modificateurs
+    (les fleches renvoient le meme code avec ou sans Shift). Ailleurs : False."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.GetKeyState(0x10) & 0x8000)
+    except Exception:
+        return False
 
 
 def _help_btn_for_key(key):
     """Index du bouton d'aide correspondant a la touche `key` (code cv2), ou None.
-    Meme correspondance que _process_key (fleches + i/j/k/l = pan/tilt ; v = camera)."""
+    Meme correspondance que _process_key (fleches nues = moteurs, Shift+fleches et
+    i/j/k/l = pan/tilt camera ; Page-Up/Down = vitesse ; v = camera)."""
     if key == 27:
         return 10
     if key == 32:
         return 2
+    if key in KEYS_PGUP or key in KEYS_PGDN:
+        return _BTN_SPEED
     if key in KEYS_LEFT or key in KEYS_RIGHT or key in KEYS_UP or key in KEYS_DOWN:
-        return 3
+        return 3 if _shift_down() else 0         # Shift -> camera, nu -> moteurs
     k = key & 0xFF
     c = chr(k).lower() if 32 <= k < 127 else ""
-    if c in ("z", "s"):
-        return 0
-    if c in ("q", "d"):
-        return 1
     if c in ("i", "j", "k", "l"):
         return 3
     if c in ("+", "=", "-"):
         return _BTN_TARGET
     return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM,
-            "r": 13, "a": 15, "g": 14}.get(c, 9 if c.isdigit() else None)
+            "r": 13, "a": 15, "g": 14, "o": 16}.get(c, None)
 
 
-def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
+def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, speed=None):
     """Matrice de boutons d'aide (bas-gauche), groupee par type : chaque GROUPE est
     une colonne (en-tete + boutons empiles, alignes en bas). Un bouton s'eclaircit
     quand sa touche est pressee (`active` = index eclaires). Geometrie deterministe
@@ -518,6 +531,8 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
                 d = f"{desc} {cam_src}"
             elif idx == _BTN_TARGET and target_size is not None:
                 d = f"{desc} {target_size:.2f}"
+            elif idx == _BTN_SPEED and speed is not None:
+                d = f"{desc} {speed}"
             (lw, _), _ = cv2.getTextSize(key, _FONT, sl, 2)
             (dw, _), _ = cv2.getTextSize(d, _FONT, sd, 1)
             labels.append((idx, key, d, lw))
@@ -552,7 +567,7 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None):
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
-                    key_flash=None, btn_accent=None, mcfg=None):
+                    key_flash=None, btn_accent=None, mcfg=None, speed=None):
     """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
 
     CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
@@ -567,7 +582,7 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                    motion_on, smooth, mcfg=mcfg)
     _draw_grove_card(frame, fw - 320 - m, fh - 176 - 16, gp_port, gp, mcfg=mcfg)
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
-                      getattr(pt, "deadzone", None), accent=btn_accent)
+                      getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
 
 
 class _ServoView:
@@ -611,7 +626,7 @@ class RobotControlCore:
         self.mcfg = None                         # config metriques (HMI/MCP/log), cf. setup()
 
         # --- etat de boucle cote Core (HMI/clavier/MCP), comme l'ancien app -----
-        self.active = False          # suivi arme (touche F) -> publie sur /tracking/config
+        self.active = True           # suivi arme par defaut (touche F) -> /tracking/config
         self.last_seq = -1           # derniere detection loguee (event detect)
         self.last_locked = None      # dernier etat de verrou (transition lock/unlock)
         self.moving = False          # une commande moteur est en cours
@@ -821,14 +836,43 @@ class RobotControlCore:
             self.tel.log("event", msg="quit")
             return True, False
 
-        if key in KEYS_LEFT:
-            self._publish_servo("nudge_pan", -SERVO_STEP)
-        elif key in KEYS_RIGHT:
-            self._publish_servo("nudge_pan", +SERVO_STEP)
-        elif key in KEYS_UP:
+        # --- fleches : Maj+fleche = camera pan/tilt ; fleche nue = moteurs -----
+        arrow = (key in KEYS_LEFT or key in KEYS_RIGHT
+                 or key in KEYS_UP or key in KEYS_DOWN)
+        if arrow and _shift_down():              # Maj+fleche : orientation camera
+            if key in KEYS_LEFT:
+                self._publish_servo("nudge_pan", -SERVO_STEP)
+            elif key in KEYS_RIGHT:
+                self._publish_servo("nudge_pan", +SERVO_STEP)
+            elif key in KEYS_UP:
+                self._publish_servo("nudge_tilt", +SERVO_STEP)
+            else:
+                self._publish_servo("nudge_tilt", -SERVO_STEP)
+        elif arrow:                              # fleche nue : deplacement moteurs
+            if self.motion_on:
+                if key in KEYS_UP:
+                    self.motion.forward()
+                elif key in KEYS_DOWN:
+                    self.motion.backward()
+                elif key in KEYS_LEFT:
+                    self.motion.rotateLeft()
+                else:
+                    self.motion.rotateRight()
+            self.moving = True
+            self.last_move_ts = now
+            return False, True
+        elif key in KEYS_PGUP:                    # Page-Up : vitesse +1 (0..9)
+            self.motion.setSpeed(self.motion.speedLevel + 1)
+        elif key in KEYS_PGDN:                    # Page-Down : vitesse -1 (0..9)
+            self.motion.setSpeed(self.motion.speedLevel - 1)
+        elif c == "i":                           # camera pan/tilt : alias clavier
             self._publish_servo("nudge_tilt", +SERVO_STEP)
-        elif key in KEYS_DOWN:
+        elif c == "k":
             self._publish_servo("nudge_tilt", -SERVO_STEP)
+        elif c == "j":
+            self._publish_servo("nudge_pan", -SERVO_STEP)
+        elif c == "l":
+            self._publish_servo("nudge_pan", +SERVO_STEP)
         elif c == "f":                           # armer / desarmer le suivi
             self.active = not self.active
             self._publish_cfg()
@@ -869,37 +913,23 @@ class RobotControlCore:
             if self.camera is not None:
                 self.camera.switch_camera()
                 self.tel.log("event", msg="camera_switch", source=self.camera.source)
-        elif c == "j":
-            self._publish_servo("nudge_pan", -SERVO_STEP)
-        elif c == "l":
-            self._publish_servo("nudge_pan", +SERVO_STEP)
-        elif c == "i":
-            self._publish_servo("nudge_tilt", +SERVO_STEP)
-        elif c == "k":
-            self._publish_servo("nudge_tilt", -SERVO_STEP)
         elif c in ("+", "="):                    # agrandir la surface cible
             self._resize_target(+TARGET_STEP)
         elif c == "-":                           # retrecir la surface cible
             self._resize_target(-TARGET_STEP)
-        elif c.isdigit():
+        elif c == "o":                           # bascule moteurs ON/OFF (securite)
+            self.motion_on = not self.motion_on
+            if not self.motion_on:               # a la coupure : arret franc immediat
+                self.motion.stop()
+                self.moving = False
+            self.tel.log("event", msg="motion", on=self.motion_on)
+            print(f"Moteurs {'ACTIFS' if self.motion_on else 'desactives'}")
+        elif c.isdigit():                        # 0-9 : reglage direct de la vitesse
             self.motion.setSpeed(int(c))
         elif k == 32:                            # Espace : STOP moteurs
             if self.motion_on:
                 self.motion.stop()
             self.moving = False
-        elif c in ("z", "s", "q", "d"):          # deplacement (momentane + watchdog)
-            if self.motion_on:
-                if c == "z":
-                    self.motion.forward()
-                elif c == "s":
-                    self.motion.backward()
-                elif c == "q":
-                    self.motion.rotateLeft()
-                elif c == "d":
-                    self.motion.rotateRight()
-            self.moving = True
-            self.last_move_ts = now
-            return False, True
         return False, False
 
     def _resize_target(self, delta):
@@ -1013,6 +1043,8 @@ class RobotControlCore:
             # boutons a etat COLLANT : F allume tant que le suivi est arme, G rouge
             # tant que le node d'apprentissage tourne (etat lu sur /recognition/train_state).
             accent = {}
+            if self.motion_on:
+                accent[16] = _C_ON                     # O (index 16) : moteurs armes
             if self.active:
                 accent[5] = _C_ON                      # F (index 5) : suivi arme
             _rmode = getattr(recog, "mode", "off") if recog is not None else "off"
@@ -1033,7 +1065,7 @@ class RobotControlCore:
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
                             self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent,
-                            mcfg=self.mcfg)
+                            mcfg=self.mcfg, speed=self.motion.speedLevel)
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge

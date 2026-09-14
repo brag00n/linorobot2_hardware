@@ -70,6 +70,9 @@ KEYS_LEFT = {2424832, 65361, 0x250000, 37, 63234}
 KEYS_UP = {2490368, 65362, 0x260000, 38, 63232}
 KEYS_RIGHT = {2555904, 65363, 0x270000, 39, 63235}
 KEYS_DOWN = {2621440, 65364, 0x280000, 40, 63233}
+# Page-Up / Page-Down (reglage vitesse moteur 0..9), memes familles de codes.
+KEYS_PGUP = {2162688, 65365, 0x210000, 33, 63276}
+KEYS_PGDN = {2228224, 65366, 0x220000, 34, 63277}
 SERVO_STEP = 2                # deg par appui fleche (reglage cam manuel)
 # Reglage LIVE de la taille de la surface cible (demi-cote normalise), touches +/-
 TARGET_STEP = 0.01            # pas d'ajustement par appui
@@ -144,10 +147,10 @@ def parse_args():
                     help="chemin du modele SFace .onnx (defaut : "
                          "face_recognition_sface_2021dec.onnx dans "
                          "resources/Other/face_detection_model)")
-    ap.add_argument("--recog-mode", default="off",
+    ap.add_argument("--recog-mode", default="recognition",
                     choices=["off", "recognition", "acquisition"],
-                    help="mode reconnaissance au demarrage : off (defaut), recognition "
-                         "(predit id/nom du visage suivi), acquisition (predit + "
+                    help="mode reconnaissance au demarrage : recognition (defaut, "
+                         "predit id/nom du visage suivi), off, acquisition (predit + "
                          "sauvegarde les crops alignes). Touche R pour cycler")
     ap.add_argument("--faces-dir", default=None,
                     help="racine du jeu de visages (identified/ + unknown/) ; "
@@ -202,7 +205,7 @@ def parse_args():
                          "travers. Appliquee apres --flip, dimensions conservees")
     ap.add_argument("--pan-gain", type=float, default=10.0)
     ap.add_argument("--tilt-gain", type=float, default=6.0)
-    ap.add_argument("--deadzone", type=float, default=0.14,
+    ap.add_argument("--deadzone", type=float, default=0.25,
                     help="demi-cote de la SURFACE centrale visee (carree a l'ecran, "
                          "reference hauteur) : tant que le visage y est, aucune "
                          "correction (anti-oscillation)")
