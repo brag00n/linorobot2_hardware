@@ -39,7 +39,8 @@ from ros_monitor import (  # noqa: E402  (import apres modif sys.path)
 )
 
 # Codes fonction des commandes (miroir de ros_mcp_server.py)
-FUNC_MOTOR = 0x10             # [m1 m2 m3 m4] int8 signe (% PWM)
+FUNC_MOTOR = 0x10             # [m1 m2 m3 m4] int8 signe (% PWM) : PWM brut, boucle ouverte
+FUNC_MOTION = 0x12            # [parm, Vx, Vy, Vz] int16 LE : consigne vitesse (kinematics + PID carte)
 FUNC_PWM_SERVO = 0x03         # [id_1based(1..4), angle(0..180)]
 FUNC_PWM_SERVO_ALL = 0x04     # [s1 s2 s3 s4] 4 angles d'un coup
 FUNC_ENTER_BOOTLOADER = 0xA3  # saut vers le bootloader ROM (flash sans BOOT0)
@@ -302,6 +303,27 @@ class RobotComSerial:
         v = [max(-100, min(100, int(x))) for x in vals]
         return self._write(build_frame(FUNC_MOTOR, bytes((x & 0xFF) for x in v)))
 
+    def sendCmdVel(self, linear_x, angular_z):
+        """Consigne de vitesse aux conventions ROS (FUNC_MOTION 0x12).
+
+        La kinematics differentielle + le PID par roue tournent SUR la carte :
+        on n'envoie que le Twist. Conversion :
+          - Vx (int16 mm/s)  = linear.x (m/s)  x 1000, borne +-1000 (plafond firmware ~1 m/s)
+          - Vz (int16 mrad/s) = angular.z (rad/s) x 1000, borne +-2000 (~2 rad/s)
+          - Vy = 0 (chassis differentiel/4-roues)
+        Tout a zero -> Motion_Stop(BRAKE) cote carte. parm=0 (pas de tenue de cap yaw).
+        """
+        def s16le(x):
+            v = int(round(x)) & 0xFFFF
+            return bytes([v & 0xFF, (v >> 8) & 0xFF])
+        vx = max(-1000, min(1000, int(round(linear_x * 1000.0))))
+        vz = max(-2000, min(2000, int(round(angular_z * 1000.0))))
+        payload = bytes([0x00]) + s16le(vx) + s16le(0) + s16le(vz)
+        ok = self._write(build_frame(FUNC_MOTION, payload))
+        if self.tel:
+            self.tel.log("tx_motion", vx=vx, vz=vz, ok=ok)
+        return ok
+
     # --- lectures instantanees derivees ------------------------------------
     def encSpeed(self, window=1.0):
         """Vitesse instantanee par moteur (tics/s) sur la fenetre glissante, ou None."""
@@ -390,7 +412,7 @@ class RobotComSerial:
         return self._write(build_frame(FUNC_SET_WHEEL_GEOM, payload)), None
 
     def getPid(self, index, timeout=1.5):
-        """PID courant (dict kp/ki/kd) : index 1..4 = moteur (partage), 5 = yaw."""
+        """PID courant (dict kp/ki/kd) : index 1..4 = moteur M1..M4, 5 = yaw."""
         func = FUNC_SET_YAW_PID if index == 5 else FUNC_SET_MOTOR_PID
         with self.lock:
             prev = self.pid.get(index)
@@ -406,21 +428,40 @@ class RobotComSerial:
         return self._requestReport(bytes([func, index & 0xFF]), read, timeout)
 
     @staticmethod
-    def _pidPayload(kp, ki, kd, verify):
-        """[kp*1000][ki*1000][kd*1000] u16 little-endian + octet verify."""
+    def _pidArgs(motor_id, save):
+        """Octet de garde/selecteur : quartet haut = moteur (0=tous, 1..4=un), quartet
+        bas = 0x0F pour sauver en flash sinon 0x00. motor_id=0 & save -> 0x0F = SAVE_VERIFY
+        (compat legacy 'tous + flash')."""
+        return ((int(motor_id) & 0x0F) << 4) | (0x0F if save else 0x00)
+
+    @staticmethod
+    def _pidPayload(kp, ki, kd, args):
+        """[kp*1000][ki*1000][kd*1000] u16 little-endian + octet args (selecteur+save)."""
         def u16(x):
             v = int(round(x * 1000.0)) & 0xFFFF
             return bytes([v & 0xFF, (v >> 8) & 0xFF])
-        return u16(kp) + u16(ki) + u16(kd) + bytes([verify])
+        return u16(kp) + u16(ki) + u16(kd) + bytes([args & 0xFF])
 
-    def setMotorPid(self, kp, ki, kd, save=False):
-        """PID moteur UNIQUE partage par les 4 moteurs (FUNC_SET_MOTOR_PID)."""
-        verify = SAVE_VERIFY if save else 0x00
+    def setMotorPid(self, kp, ki, kd, save=False, motor_id=0, disable=False):
+        """Regle le PID d'UN moteur (FUNC_SET_MOTOR_PID).
+
+        motor_id : 0 = les 4 moteurs (compat), 1..4 = un moteur (M1..M4).
+        disable=True : envoie la sentinelle (gains 0xFFFF) -> la carte desactive le PID
+          de ce moteur (encodeur HS) et le cale en recopie sur son voisin de meme cote.
+          Ignore pour motor_id=0 (on ne desactive pas les 4 d'un coup).
+        save=True : persiste en flash (RAM seule sinon).
+        """
+        args = self._pidArgs(motor_id, save)
+        if disable and motor_id != 0:
+            # Sentinelle brute : 3 mots a 0xFFFF (ne PAS passer par u16(*1000)).
+            payload = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, args & 0xFF])
+            return self._write(build_frame(FUNC_SET_MOTOR_PID, payload))
         return self._write(build_frame(FUNC_SET_MOTOR_PID,
-                                       self._pidPayload(kp, ki, kd, verify)))
+                                       self._pidPayload(kp, ki, kd, args)))
 
     def setYawPid(self, kp, ki, kd, save=False):
-        """PID de cap/yaw (FUNC_SET_YAW_PID)."""
+        """PID de cap/yaw (FUNC_SET_YAW_PID). Le handler 0x14 attend l'octet SAVE_VERIFY
+        (0x5F) pour flasher (pas de selecteur moteur ici)."""
         verify = SAVE_VERIFY if save else 0x00
         return self._write(build_frame(FUNC_SET_YAW_PID,
                                        self._pidPayload(kp, ki, kd, verify)))

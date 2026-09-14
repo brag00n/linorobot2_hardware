@@ -1,67 +1,78 @@
-r"""RobotMotorDrive - Commandes moteurs haut niveau (chassis 4 roues Bamboo v4).
+r"""RobotMotorDrive - Consigne de deplacement haut niveau (chassis 4 roues Bamboo v4).
 
-Portage de l'ancien motion.Motion (style Bambou4WD_python : RobotXxx, camelCase,
-setters fluides). Comportement INCHANGE : traduit une consigne (throttle
-avant/arriere, turn rotation) en 4 PWM signes envoyes via RobotComSerial.sendMotor.
-La table de signes marche-avant [+1,-1,-1,+1] provient de t_motor_drive_all
-(ros_mcp_server.py) : c'est le vecteur "avancer" du chassis.
+Modele « etat combine type ROS » : l'objet ne pilote plus des PWM bruts, il PORTE
+un etat `cmd_vel` (Twist) memorise -- `linear.x` (m/s, avant +) et `angular.z`
+(rad/s, anti-horaire +) -- que l'application republie en continu (~10 Hz) via
+RobotComSerial.sendCmdVel (FUNC_MOTION 0x12). La carte STM32 fait la kinematics
+differentielle embarquee + le PID par roue : on ne calcule donc AUCUN melange de
+signes ni de mapping roue cote hote (tout est gere par Fourwheel_Ctrl firmware).
 
-/!\ A VERIFIER ROUES SURELEVEES puis ajuster les signes si un moteur tourne a
-l'envers. Notes materiel connues : M3 sans marche arriere, M2 encodeur HS
-(sans effet ici : teleop en PWM boucle ouverte, pas d'odometrie requise).
+Les fleches AJUSTENT cet etat (nudgeLinear/nudgeAngular), Espace/coupure le remet
+a zero (reset/stop). On peut avancer ET tourner en meme temps -> arcs.
+
+Prerequis carte : type chassis CAR_FOURWHEEL (set_car_type 4) pour router sur la
+kinematics 4 roues, et geometrie roue reglee (set_wheel_geom). M2 (encodeur HS)
+est asservi en recopie sur sa roue de meme ligne (M4, recopie inversee) cote
+firmware (sentinelle PID).
 """
 
-# Vecteur marche avant : signe applique a chaque moteur pour "avancer".
-FORWARD_SIGN = (+1, -1, -1, +1)
-
-# Vecteur rotation (tourner sur place, sens horaire vu de dessus) : cote gauche
-# vs cote droit. Hypothese M1/M2 = un cote, M3/M4 = l'autre -> a confirmer et
-# ajuster au banc. Une rotation = avancer un cote, reculer l'autre.
-TURN_SIGN = (+1, +1, -1, -1)
+# Plafonds de securite (doivent rester <= aux bornes de sendCmdVel : 1 m/s, 2 rad/s).
+MAX_LIN = 1.0      # m/s   (plafond firmware ~1000 mm/s)
+MAX_ANG = 2.0      # rad/s (borne sendCmdVel a +-2000 mrad/s)
 
 
 class RobotMotorDrive:
-    """Melange throttle/turn -> 4 PWM signes, avec borne de securite."""
+    """Porteur d'etat cmd_vel (linear.x / angular.z) republie par l'application."""
 
     def __init__(self, link, maxPwm=30):
         self.link = link
+        # maxPwm garde pour compat d'appel ; sans effet en boucle fermee (PID carte).
         self.maxPwm = max(1, min(100, int(maxPwm)))
-        self.speedLevel = 3           # 0..9, echelonne l'amplitude du throttle
+        self.speedLevel = 3           # 0..9 : echelonne le PAS d'increment des fleches
+        self.lin = 0.0                # linear.x courant (m/s)
+        self.ang = 0.0                # angular.z courant (rad/s)
 
     def setSpeed(self, level):
         self.speedLevel = max(0, min(9, int(level)))
         return self
 
-    def _amp(self):
-        """Amplitude PWM courante (%) selon le niveau de vitesse (0..9)."""
-        return int(round(self.maxPwm * self.speedLevel / 9.0))
+    # --- pas d'increment (croit avec le niveau de vitesse) ------------------
+    def _stepLin(self):
+        return MAX_LIN * (self.speedLevel + 1) / 20.0     # 0.05 .. 0.5 m/s par appui
 
-    def _mix(self, throttle, turn):
-        """throttle, turn dans [-1, +1] -> tuple (m1..m4) PWM signes bornes."""
-        amp = self._amp()
-        vals = []
-        for i in range(4):
-            v = FORWARD_SIGN[i] * throttle + TURN_SIGN[i] * turn
-            v = max(-1.0, min(1.0, v))            # sature avant mise a l'echelle
-            vals.append(int(round(amp * v)))
-        return tuple(vals)
+    def _stepAng(self):
+        return MAX_ANG * (self.speedLevel + 1) / 20.0     # 0.1 .. 1.0 rad/s par appui
 
-    def drive(self, throttle, turn):
-        """Envoie une consigne melangee (throttle avant+, turn horaire+)."""
-        return self.link.sendMotor(*self._mix(throttle, turn))
+    # --- ajustement de l'etat cmd_vel ---------------------------------------
+    def nudgeLinear(self, sign):
+        """Incremente linear.x (+1 avant / -1 arriere), borne a +-MAX_LIN."""
+        self.lin = max(-MAX_LIN, min(MAX_LIN, self.lin + sign * self._stepLin()))
+        return self
 
-    # --- raccourcis teleop --------------------------------------------------
-    def forward(self):
-        return self.drive(+1.0, 0.0)
+    def nudgeAngular(self, sign):
+        """Incremente angular.z (+1 anti-horaire / -1 horaire), borne a +-MAX_ANG."""
+        self.ang = max(-MAX_ANG, min(MAX_ANG, self.ang + sign * self._stepAng()))
+        return self
 
-    def backward(self):
-        return self.drive(-1.0, 0.0)
+    def reset(self):
+        """Remet l'etat cmd_vel a zero (sans emettre : le republieur enverra 0)."""
+        self.lin = 0.0
+        self.ang = 0.0
+        return self
 
-    def rotateLeft(self):
-        return self.drive(0.0, -1.0)
+    def isMoving(self):
+        return self.lin != 0.0 or self.ang != 0.0
 
-    def rotateRight(self):
-        return self.drive(0.0, +1.0)
+    # --- emission -----------------------------------------------------------
+    def publish(self):
+        """Republie l'etat cmd_vel courant (a appeler ~10 Hz tant que moteurs armes)."""
+        return self.link.sendCmdVel(self.lin, self.ang)
 
     def stop(self):
-        return self.link.stop()
+        """Arret franc : etat a zero + cmd_vel(0,0) envoye plusieurs fois (Motion_Stop
+        cote carte remet g_start_ctrl=0). Fiable meme en pleine boucle fermee."""
+        self.reset()
+        ok = False
+        for _ in range(3):
+            ok = self.link.sendCmdVel(0.0, 0.0) or ok
+        return ok

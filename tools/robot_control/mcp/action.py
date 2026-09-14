@@ -42,9 +42,10 @@ SERVER_NAME = "robot-action"
 
 _LOG = _rpc.make_log("rc-action")
 
-# tools/robot_control/mcp/action.py -> repo (quatre niveaux au-dessus).
+# tools/robot_control/mcp/action.py -> racine repo (trois niveaux au-dessus de
+# mcp/ : mcp -> robot_control -> tools -> linorobot2_hardware).
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_HERE))))
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
 STM32_ROOT = os.path.join(_REPO, "firmware", "stm32_bamboo")
 STM32_TOOLS = os.path.join(STM32_ROOT, "tools")
 
@@ -335,6 +336,23 @@ TOOLS = [
                                      "description": "duree en s (0.1..5, defaut 3)"},
                          "reverse": {"type": "boolean",
                                      "description": "raccourci : true = marche arriere"}}}},
+    {"name": "cmd_vel",
+     "description": "Consigne de vitesse ROS en BOUCLE FERMEE (FUNC_MOTION 0x12) : la "
+                    "carte fait la kinematics differentielle + le PID par roue. Republie "
+                    "le Twist @10Hz pendant `seconds`, echantillonne les rpm (la "
+                    "regulation EGALISE M1/M3/M4, vs ~86 % d'ecart en PWM brut) et coupe "
+                    "franc a la fin (cmd_vel 0,0 -> Motion_Stop). Prerequis : car_type=4 "
+                    "(FOURWHEEL). ROUES SURELEVEES obligatoire. M2 (encodeur mort) : "
+                    "esclave M4 (meme ligne, recopie inversee), a verifier visuellement.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "linear": {"type": "number",
+                                    "description": "linear.x en m/s (-0.4..0.4)"},
+                         "angular": {"type": "number",
+                                     "description": "angular.z en rad/s (-1.5..1.5), "
+                                                    "+ = tourne a gauche"},
+                         "seconds": {"type": "number",
+                                     "description": "duree de republiation en s (0.1..5, defaut 1.5)"}}}},
     {"name": "pwm_servo",
      "description": "Positionne un servo PWM (SG90) en angle absolu. S1=id 1, S2=id 2, "
                     "S3=id 3, S4=id 4. Angle borne 0..180 deg. Option sweep=true : "
@@ -388,17 +406,24 @@ TOOLS = [
                          "save": {"type": "boolean",
                                   "description": "true (defaut) = flash ; false = RAM"}}}},
     {"name": "set_motor_pid",
-     "description": "Regle le PID moteur (FUNC_SET_MOTOR_PID 0x13), PID UNIQUE partage "
-                    "par les 4 moteurs. save=false (DEFAUT) = RAM (tuning) ; save=true "
-                    "= flash. Relit pour confirmer.",
+     "description": "Regle le PID d'UN moteur (FUNC_SET_MOTOR_PID 0x13), gains "
+                    "independants par moteur. motor_id : 0 (defaut) = les 4 moteurs, "
+                    "1..4 = M1..M4. disable=true (moteur precis) : envoie la sentinelle "
+                    "-> desactive le PID de ce moteur (encodeur HS) et le cale en recopie "
+                    "sur son voisin de meme cote (kp/ki/kd ignores). save=false (DEFAUT) "
+                    "= RAM (tuning) ; save=true = flash. Relit pour confirmer.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "kp": {"type": "number", "description": "gain proportionnel"},
                          "ki": {"type": "number", "description": "gain integral"},
                          "kd": {"type": "number", "description": "gain derive"},
+                         "motor_id": {"type": "integer",
+                                      "description": "0 (defaut) = tous ; 1..4 = M1..M4"},
+                         "disable": {"type": "boolean",
+                                     "description": "true = desactiver le PID de ce moteur "
+                                                    "(encodeur HS) et l'asservir sur son voisin"},
                          "save": {"type": "boolean",
-                                  "description": "false (defaut) = RAM ; true = flash"}},
-                     "required": ["kp", "ki", "kd"]}},
+                                  "description": "false (defaut) = RAM ; true = flash"}}}},
     {"name": "set_yaw_pid",
      "description": "Regle le PID de cap/yaw (FUNC_SET_YAW_PID 0x14). save=false "
                     "(DEFAUT) = RAM ; save=true = flash. Relit pour confirmer.",
@@ -411,7 +436,7 @@ TOOLS = [
                                   "description": "false (defaut) = RAM ; true = flash"}},
                      "required": ["kp", "ki", "kd"]}},
     {"name": "get_pid",
-     "description": "Lit les PID courants : moteur (partage, index 1) et yaw (index 5).",
+     "description": "Lit les PID courants : les 4 moteurs (M1..M4) et yaw.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "calibrate_baseline",
      "description": "Fixe le comptage encodeur courant comme zero de reference, avant "
@@ -444,7 +469,7 @@ TOOLS = [
                                       "description": "true si la carte est deja dans le bootloader"}}}},
 ]
 
-_BOARD_TOOLS = ("motor_drive", "motor_drive_all", "pwm_servo", "metrics", "encoders",
+_BOARD_TOOLS = ("motor_drive", "motor_drive_all", "cmd_vel", "pwm_servo", "metrics", "encoders",
                 "car_type", "set_car_type", "get_wheel_geom", "set_wheel_geom",
                 "set_motor_pid", "set_yaw_pid", "get_pid",
                 "calibrate_baseline", "calibrate_read")

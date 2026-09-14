@@ -360,6 +360,65 @@ def _cmd_motor_drive_all(args, link, motion, cpr):
     return "\n".join(lines)
 
 
+# --- cmd_vel : boucle fermee (kinematics + PID carte) ----------------------
+def _cmd_cmd_vel(args, link, motion, cpr):
+    """Consigne de vitesse aux conventions ROS (FUNC_MOTION 0x12) : la carte
+    fait la kinematics differentielle + le PID par roue. On republie le Twist
+    @10Hz pendant `seconds`, on echantillonne les rpm (regulation => M1/M3/M4
+    doivent s'EGALISER, vs l'ecart ~86 % en PWM brut), puis STOP garanti
+    (cmd_vel 0,0 repete -> Motion_Stop). ROUES SURELEVEES obligatoire.
+    Prerequis : car_type=4 (FOURWHEEL) sinon la trame n'est pas routee vers la
+    kinematics 4-roues. M2 (encodeur mort) : non observable -> controle visuel."""
+    if not link.connected:
+        return "Port non connecte : impossible de piloter."
+    lin = max(-0.4, min(0.4, _f(args.get("linear"), 0.0)))     # securite banc : +-0.4 m/s
+    ang = max(-1.5, min(1.5, _f(args.get("angular"), 0.0)))    # securite banc : +-1.5 rad/s
+    seconds = max(0.1, min(5.0, _f(args.get("seconds"), 1.5)))  # securite : 5 s
+    if lin == 0.0 and ang == 0.0:
+        for _ in range(4):
+            link.sendCmdVel(0.0, 0.0)
+            time.sleep(0.05)
+        return "cmd_vel(0,0) : arret (Motion_Stop) envoye."
+    base = _snap_encoders(link)
+    if base is None:
+        return "Aucune trame encodeur : mesure impossible."
+    c = link.cpr or cpr
+    last_sp = None
+    try:
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            link.sendCmdVel(lin, ang)                          # republie (entretien + anti-watchdog)
+            time.sleep(0.1)                                    # ~10 Hz comme le teleop
+            sp = link.encSpeed()
+            if sp:
+                last_sp = sp                                   # dernier regime (etat etabli)
+    finally:
+        for _ in range(6):                                     # STOP franc, toujours
+            link.sendCmdVel(0.0, 0.0)
+            time.sleep(0.05)
+    time.sleep(0.4)
+    final = _snap_encoders(link) or base
+    lines = ["cmd_vel : linear.x=%.3f m/s  angular.z=%.3f rad/s  pendant %gs :"
+             % (lin, ang, seconds),
+             "  deltas (tics) : "
+             + "  ".join("M%d=%+d%s" % (i + 1, final[i] - base[i],
+                                        " (HS)" if i == 1 else "")
+                         for i in range(4))]
+    if last_sp:
+        lines.append("  regime etabli : "
+                     + "  ".join("M%d=%+.0f tr/min%s"
+                                 % (i + 1, last_sp[i] * 60.0 / c, " (HS)" if i == 1 else "")
+                                 for i in range(4)))
+        ok = [abs(last_sp[i]) for i in (0, 2, 3)]              # M1,M3,M4 (M2 encodeur mort)
+        if max(ok) > 0:
+            spread = (max(ok) - min(ok)) / max(ok) * 100.0
+            lines.append("  ecart M1/M3/M4 : %.1f %%  (PWM brut : ~86 %%) "
+                         "=> %s" % (spread,
+                                    "REGULE" if spread < 20 else "encore disperse"))
+    lines.append("(M2 esclave M4 : verifier visuellement la rotation synchrone)")
+    return "\n".join(lines)
+
+
 # --- servos ----------------------------------------------------------------
 def _cmd_pwm_servo(args, link, motion, cpr):
     if not link.connected:
@@ -388,20 +447,39 @@ def _pid_args(args):
 def _cmd_set_motor_pid(args, link, motion, cpr):
     if not link.connected:
         return "Port non connecte : impossible d'ecrire le PID moteur."
+    try:
+        motor_id = int(args.get("motor_id", 0) or 0)
+    except (TypeError, ValueError):
+        return "motor_id doit etre un entier 0..4 (0 = les 4 moteurs)."
+    if not 0 <= motor_id <= 4:
+        return "motor_id hors plage : 0 (tous) ou 1..4 (M1..M4)."
+    save = bool(args.get("save"))                        # defaut RAM
+    disable = bool(args.get("disable"))
+    cible = "les 4 moteurs" if motor_id == 0 else "M%d" % motor_id
+
+    # Desactivation (encodeur HS) : sentinelle -> le moteur suit son voisin de meme cote.
+    if disable:
+        if motor_id == 0:
+            return "disable exige un moteur precis (motor_id 1..4), pas 'tous'."
+        if not link.setMotorPid(0, 0, 0, save=save, motor_id=motor_id, disable=True):
+            return "Ecriture sentinelle KO."
+        dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
+        return ("PID %s DESACTIVE (encodeur HS) -> asservi en recopie sur son voisin "
+                "de meme cote, vers %s." % (cible, dest))
+
     kp, ki, kd, err = _pid_args(args)
     if err:
         return err
-    save = bool(args.get("save"))                        # defaut RAM
-    if not link.setMotorPid(kp, ki, kd, save=save):
+    if not link.setMotorPid(kp, ki, kd, save=save, motor_id=motor_id):
         return "Ecriture PID moteur KO."
     time.sleep(0.2)
-    got = link.getPid(1)
+    got = link.getPid(motor_id if motor_id != 0 else 1)
     dest = "FLASH (persistant)" if save else "RAM (perdu au reset)"
-    head = "PID moteur ecrit -> kp=%.3f ki=%.3f kd=%.3f vers %s." % (kp, ki, kd, dest)
+    head = "PID %s ecrit -> kp=%.3f ki=%.3f kd=%.3f vers %s." % (cible, kp, ki, kd, dest)
     if got is None:
         return head + "\n  Pas de relecture : verifie avec get_pid."
-    return head + "\n  relecture (partage) : kp=%.3f ki=%.3f kd=%.3f" % (
-        got["kp"], got["ki"], got["kd"])
+    return head + "\n  relecture M%d : kp=%.3f ki=%.3f kd=%.3f" % (
+        int(got["index"]), got["kp"], got["ki"], got["kd"])
 
 
 def _cmd_set_yaw_pid(args, link, motion, cpr):
@@ -426,12 +504,14 @@ def _cmd_set_yaw_pid(args, link, motion, cpr):
 def _cmd_get_pid(args, link, motion, cpr):
     if not link.connected:
         return "Port non connecte : impossible de lire les PID."
-    m = link.getPid(1)
-    y = link.getPid(5)
     lines = []
-    lines.append("PID moteur (partage) : kp=%.3f ki=%.3f kd=%.3f"
-                 % (m["kp"], m["ki"], m["kd"]) if m else "PID moteur : pas de reponse.")
-    lines.append("PID yaw              : kp=%.3f ki=%.3f kd=%.3f"
+    for i in range(1, 5):
+        m = link.getPid(i)
+        lines.append("PID M%d  : kp=%.3f ki=%.3f kd=%.3f"
+                     % (i, m["kp"], m["ki"], m["kd"]) if m
+                     else "PID M%d  : pas de reponse." % i)
+    y = link.getPid(5)
+    lines.append("PID yaw : kp=%.3f ki=%.3f kd=%.3f"
                  % (y["kp"], y["ki"], y["kd"]) if y else "PID yaw : pas de reponse.")
     return "\n".join(lines)
 
@@ -597,6 +677,7 @@ def _cmd_calibrate_read(args, link, motion, cpr):
 _BOARD_HANDLERS = {
     "motor_drive": _cmd_motor_drive,
     "motor_drive_all": _cmd_motor_drive_all,
+    "cmd_vel": _cmd_cmd_vel,
     "pwm_servo": _cmd_pwm_servo,
     "set_motor_pid": _cmd_set_motor_pid,
     "set_yaw_pid": _cmd_set_yaw_pid,

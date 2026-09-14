@@ -44,9 +44,13 @@ import numpy as np
 from robot_control.RobotMain import (
     parse_args,
     _overlay_detections, _overlay_main_marker, _overlay_reticle, _overlay_prediction,
-    MOVE_WATCHDOG_S, KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN,
+    KEYS_LEFT, KEYS_UP, KEYS_RIGHT, KEYS_DOWN,
     KEYS_PGUP, KEYS_PGDN, SERVO_STEP, TARGET_STEP, clamp_target,
 )
+
+# Periode de republication cmd_vel (modele etat combine type ROS) : ~10 Hz.
+# Tolerance : le watchdog cmd_vel firmware coupe apres ~400 ms sans trame.
+CMDVEL_PERIOD_S = 0.1
 from robot_control.lib.Telemetry import Telemetry
 from robot_control.version import APP_VERSION
 from robot_control.communication.RobotComSerial import RobotComSerial
@@ -227,7 +231,7 @@ def _draw_cam_card(frame, x, y, cam_ok, camnode, active, met, n_faces, p1_fps,
 
 
 def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
-                   mcfg=None):
+                   mcfg=None, cmdvel=None):
     """Carte STM32 (haut-droit) : etats moteurs/lissage + servos + fluidite + IMU carte
     + vitesses de rotation moteurs (barres bipolaires). Chaque sous-bloc est dessine
     seulement si son groupe de metriques est actif (cible HMI)."""
@@ -257,8 +261,13 @@ def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
             (10, "pas-max", _C_LABEL), (98, f"{step_max:4.1f}deg", mcol),
             (170, "v", _C_LABEL), (258, f"{vmax:4.0f}deg/s", mcol)])
     if _hmi(mcfg, "stm32_batt"):
+        # cmd_vel courant (modele ROS) : linear.x (m/s) / angular.z (rad/s)
+        lin, ang = (cmdvel if cmdvel is not None else (0.0, 0.0))
+        cvcol = _C_ON if (lin or ang) else _C_OFF
         _row(frame, x, yc + 57, [
-            (10, "batt", _C_LABEL), (98, batt, _C_VAL)])
+            (10, "batt", _C_LABEL), (98, batt, _C_VAL),
+            (150, "cmd_vel", _C_LABEL),
+            (222, f"{lin:+.2f}m/s {ang:+.2f}r/s", cvcol)])
     if _hmi(mcfg, "stm32_imu"):
         # IMU de la carte STM32 (attitude roll/pitch/yaw, trame 0x0C)
         _row(frame, x, yc + 76, [
@@ -567,7 +576,7 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
-                    key_flash=None, btn_accent=None, mcfg=None, speed=None):
+                    key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None):
     """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
 
     CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
@@ -579,7 +588,7 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
     _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps,
                    tstate, mcfg=mcfg)
     _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
-                   motion_on, smooth, mcfg=mcfg)
+                   motion_on, smooth, mcfg=mcfg, cmdvel=cmdvel)
     _draw_grove_card(frame, fw - 320 - m, fh - 176 - 16, gp_port, gp, mcfg=mcfg)
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
                       getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
@@ -629,8 +638,7 @@ class RobotControlCore:
         self.active = True           # suivi arme par defaut (touche F) -> /tracking/config
         self.last_seq = -1           # derniere detection loguee (event detect)
         self.last_locked = None      # dernier etat de verrou (transition lock/unlock)
-        self.moving = False          # une commande moteur est en cours
-        self.last_move_ts = 0.0
+        self._cmdvel_t0 = 0.0        # horodatage du dernier republication cmd_vel (~10 Hz)
         self._servo_seq = 0          # sequence des ServoCmd clavier (messages discrets)
         self._recog_seq = 0          # sequence des commandes reco ponctuelles (train/fichier)
 
@@ -848,18 +856,19 @@ class RobotControlCore:
                 self._publish_servo("nudge_tilt", +SERVO_STEP)
             else:
                 self._publish_servo("nudge_tilt", -SERVO_STEP)
-        elif arrow:                              # fleche nue : deplacement moteurs
+        elif arrow:                              # fleche nue : ajuste l'etat cmd_vel
             if self.motion_on:
+                # Etat combine type ROS : les fleches incrementent linear.x / angular.z ;
+                # le republieur (~10 Hz) entretient le mouvement. Avant + tourner -> arc.
                 if key in KEYS_UP:
-                    self.motion.forward()
+                    self.motion.nudgeLinear(+1)
                 elif key in KEYS_DOWN:
-                    self.motion.backward()
+                    self.motion.nudgeLinear(-1)
                 elif key in KEYS_LEFT:
-                    self.motion.rotateLeft()
+                    self.motion.nudgeAngular(+1)   # anti-horaire (gauche)
                 else:
-                    self.motion.rotateRight()
-            self.moving = True
-            self.last_move_ts = now
+                    self.motion.nudgeAngular(-1)   # horaire (droite)
+                self.motion.publish()              # emet tout de suite (reactivite)
             return False, True
         elif key in KEYS_PGUP:                    # Page-Up : vitesse +1 (0..9)
             self.motion.setSpeed(self.motion.speedLevel + 1)
@@ -919,17 +928,14 @@ class RobotControlCore:
             self._resize_target(-TARGET_STEP)
         elif c == "o":                           # bascule moteurs ON/OFF (securite)
             self.motion_on = not self.motion_on
-            if not self.motion_on:               # a la coupure : arret franc immediat
+            if not self.motion_on:               # a la coupure : cmd_vel(0,0) franc
                 self.motion.stop()
-                self.moving = False
             self.tel.log("event", msg="motion", on=self.motion_on)
             print(f"Moteurs {'ACTIFS' if self.motion_on else 'desactives'}")
         elif c.isdigit():                        # 0-9 : reglage direct de la vitesse
             self.motion.setSpeed(int(c))
-        elif k == 32:                            # Espace : STOP moteurs
-            if self.motion_on:
-                self.motion.stop()
-            self.moving = False
+        elif k == 32:                            # Espace : STOP (etat cmd_vel a zero)
+            self.motion.stop()
         return False, False
 
     def _resize_target(self, delta):
@@ -1065,7 +1071,8 @@ class RobotControlCore:
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
                             self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent,
-                            mcfg=self.mcfg, speed=self.motion.speedLevel)
+                            mcfg=self.mcfg, speed=self.motion.speedLevel,
+                            cmdvel=(self.motion.lin, self.motion.ang))
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge
@@ -1085,24 +1092,26 @@ class RobotControlCore:
             # 8) commandes MCP en file (config suivi + carte) -> thread principal
             self.server.drain()
 
-            # 9) clavier + watchdog de mouvement (clavier coupe en --headless)
+            # 9) clavier (coupe en --headless)
             key = cv2.waitKeyEx(1) if not self.headless else -1
-            moved_now = False
             if key != -1:
                 bi = _help_btn_for_key(key)          # eclaire le bouton d'aide pressé
                 if bi is not None:
                     self._btn_flash[bi] = now
-                quit_now, moved_now = self._process_key(key, now)
+                quit_now, _moved = self._process_key(key, now)
                 if quit_now:
                     break
             if self.headless:
                 time.sleep(0.005)                # sans waitKey : evite la boucle folle
             elif not cam_ok:
                 time.sleep(0.02)                 # sans camera : cap ~50 fps (evite 100% CPU)
-            if self.moving and not moved_now and (now - self.last_move_ts) > MOVE_WATCHDOG_S:
-                if self.motion_on:
-                    self.motion.stop()
-                self.moving = False
+
+            # 10) republieur cmd_vel ~10 Hz : entretient l'etat de mouvement (modele ROS)
+            #     et nourrit le watchdog cmd_vel firmware. A l'arret (etat 0) on emet
+            #     quand meme cmd_vel(0,0) tant que les moteurs sont armes (Motion_Stop).
+            if self.motion_on and (now - self._cmdvel_t0) >= CMDVEL_PERIOD_S:
+                self.motion.publish()
+                self._cmdvel_t0 = now
 
     def _maybe_heartbeat(self, snap, tstate, det_fps, pt, gp=None):
         """Battement telemetrie toutes les 2 s (perf, servo, carte, suivi, capteurs).
@@ -1148,8 +1157,10 @@ class RobotControlCore:
         if self.server is not None:
             self.server.stop()
         try:
-            if self.motion_on and self.link is not None:
-                self.link.stop()
+            # Arret fiable meme en pleine boucle fermee : cmd_vel(0,0) -> Motion_Stop
+            # (le PWM brut ne remet pas g_start_ctrl=0 et serait ecrase par le PID).
+            if self.link is not None and self.motion is not None:
+                self.motion.stop()
         except Exception:
             pass
         if self.executor is not None:
