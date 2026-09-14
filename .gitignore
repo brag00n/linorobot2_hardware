@@ -112,3 +112,9 @@ firmware/esp32_wireshare/src/data/wifiConfig.json
 # caches Python (outils de test des cartes)
 __pycache__/
 *.pyc
+
+# ancien firmware linorobot2 (reference locale, non versionne)
+firmware/firmware/
+
+# logs runtime de l app teleop
+tools/robot_control/logs/
