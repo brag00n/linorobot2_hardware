@@ -520,20 +520,21 @@ void Motion_Send_Wheel_Geom(void)
 // 发送小车数据到主控上
 void Motion_Send_Data(void)
 {
-    #define LEN        12
+    #define LEN        16
 	uint8_t data_buffer[LEN] = {0};
 	uint8_t i, checknum = 0;
 	data_buffer[0] = PTO_HEAD;
 	data_buffer[1] = PTO_DEVICE_ID-1;
 	data_buffer[2] = LEN-2; // 数量
 	data_buffer[3] = FUNC_REPORT_SPEED; // 功能位
-	data_buffer[4] = car_data.Vx & 0xff;
-	data_buffer[5] = (car_data.Vx >> 8) & 0xff;
-	data_buffer[6] = car_data.Vy & 0xff;
-	data_buffer[7] = (car_data.Vy >> 8) & 0xff;
-    data_buffer[8] = car_data.Vz & 0xff;
-	data_buffer[9] = (car_data.Vz >> 8) & 0xff;
-	data_buffer[10] = (uint8_t)(Bat_Voltage_Z10());  // 依赖于系统电压检测;
+	Proto_Put_U32_LE(&data_buffer[4], Proto_Now_Ms()); // timestamp horloge interne (ms, u32 LE)
+	data_buffer[8] = car_data.Vx & 0xff;
+	data_buffer[9] = (car_data.Vx >> 8) & 0xff;
+	data_buffer[10] = car_data.Vy & 0xff;
+	data_buffer[11] = (car_data.Vy >> 8) & 0xff;
+    data_buffer[12] = car_data.Vz & 0xff;
+	data_buffer[13] = (car_data.Vz >> 8) & 0xff;
+	data_buffer[14] = (uint8_t)(Bat_Voltage_Z10());  // 依赖于系统电压检测;
 
 	for (i = 2; i < LEN-1; i++)
 	{

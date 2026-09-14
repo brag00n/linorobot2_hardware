@@ -3,6 +3,9 @@
 #include "yb_debug.h"
 #include "app.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 
 #include "bsp.h"
 #include "app_motion.h"
@@ -30,6 +33,23 @@ uint8_t New_CMD_length;
 uint8_t g_Request_Flag = 0;
 uint8_t g_Request_ARM_ID = 0;
 uint8_t g_Request_Parm = 0;
+
+
+// Horloge interne monotone en ms (tick FreeRTOS 1 kHz, u32, rollover ~49,7 j).
+// Prefixe les trames de metriques pour dater la mesure a la source (idem carte GrovePi).
+uint32_t Proto_Now_Ms(void)
+{
+	return (uint32_t)xTaskGetTickCount();
+}
+
+// Ecrit un u32 en little-endian (LSB en tete) dans buf[0..3].
+void Proto_Put_U32_LE(uint8_t *buf, uint32_t value)
+{
+	buf[0] = value & 0xff;
+	buf[1] = (value >> 8) & 0xff;
+	buf[2] = (value >> 16) & 0xff;
+	buf[3] = (value >> 24) & 0xff;
+}
 
 
 // 请求数据的处理函数

@@ -345,33 +345,34 @@ void MPU9250_Read_Data_Handle(void)
 
 void MPU9250_Send_Raw_Data(void)
 {
-#define LEN 23
+#define LEN 27
 	uint8_t data_buffer[LEN] = {0};
 	uint8_t i, checknum = 0;
 	data_buffer[0] = PTO_HEAD;
 	data_buffer[1] = PTO_DEVICE_ID - 1;
 	data_buffer[2] = LEN - 2;			  // 数量
 	data_buffer[3] = FUNC_REPORT_MPU_RAW; // 功能位
-	data_buffer[4] = mpu_data.gyro[0] & 0xff;
-	data_buffer[5] = (mpu_data.gyro[0] >> 8) & 0xff;
-	data_buffer[6] = mpu_data.gyro[1] & 0xff;
-	data_buffer[7] = (mpu_data.gyro[1] >> 8) & 0xff;
-	data_buffer[8] = mpu_data.gyro[2] & 0xff;
-	data_buffer[9] = (mpu_data.gyro[2] >> 8) & 0xff;
+	Proto_Put_U32_LE(&data_buffer[4], Proto_Now_Ms()); // timestamp horloge interne (ms, u32 LE)
+	data_buffer[8] = mpu_data.gyro[0] & 0xff;
+	data_buffer[9] = (mpu_data.gyro[0] >> 8) & 0xff;
+	data_buffer[10] = mpu_data.gyro[1] & 0xff;
+	data_buffer[11] = (mpu_data.gyro[1] >> 8) & 0xff;
+	data_buffer[12] = mpu_data.gyro[2] & 0xff;
+	data_buffer[13] = (mpu_data.gyro[2] >> 8) & 0xff;
 
-	data_buffer[10] = mpu_data.accel[0] & 0xff;
-	data_buffer[11] = (mpu_data.accel[0] >> 8) & 0xff;
-	data_buffer[12] = mpu_data.accel[1] & 0xff;
-	data_buffer[13] = (mpu_data.accel[1] >> 8) & 0xff;
-	data_buffer[14] = mpu_data.accel[2] & 0xff;
-	data_buffer[15] = (mpu_data.accel[2] >> 8) & 0xff;
+	data_buffer[14] = mpu_data.accel[0] & 0xff;
+	data_buffer[15] = (mpu_data.accel[0] >> 8) & 0xff;
+	data_buffer[16] = mpu_data.accel[1] & 0xff;
+	data_buffer[17] = (mpu_data.accel[1] >> 8) & 0xff;
+	data_buffer[18] = mpu_data.accel[2] & 0xff;
+	data_buffer[19] = (mpu_data.accel[2] >> 8) & 0xff;
 
-	data_buffer[16] = mpu_data.compass[0] & 0xff;
-	data_buffer[17] = (mpu_data.compass[0] >> 8) & 0xff;
-	data_buffer[18] = mpu_data.compass[1] & 0xff;
-	data_buffer[19] = (mpu_data.compass[1] >> 8) & 0xff;
-	data_buffer[20] = mpu_data.compass[2] & 0xff;
-	data_buffer[21] = (mpu_data.compass[2] >> 8) & 0xff;
+	data_buffer[20] = mpu_data.compass[0] & 0xff;
+	data_buffer[21] = (mpu_data.compass[0] >> 8) & 0xff;
+	data_buffer[22] = mpu_data.compass[1] & 0xff;
+	data_buffer[23] = (mpu_data.compass[1] >> 8) & 0xff;
+	data_buffer[24] = mpu_data.compass[2] & 0xff;
+	data_buffer[25] = (mpu_data.compass[2] >> 8) & 0xff;
 
 	for (i = 2; i < LEN - 1; i++)
 	{
@@ -385,19 +386,20 @@ void MPU9250_Send_Raw_Data(void)
 // 发送姿态角数据到主控，单位：弧度
 void MPU9250_Send_Attitude_Data(void)
 {
-    #define LENS        11
+    #define LENS        15
 	uint8_t data_buffer[LENS] = {0};
 	uint8_t i, checknum = 0;
 	data_buffer[0] = PTO_HEAD;
 	data_buffer[1] = PTO_DEVICE_ID-1;
 	data_buffer[2] = LENS-2; // 数量
 	data_buffer[3] = FUNC_REPORT_IMU_ATT;    // 功能位
-	data_buffer[4] = (int)(MPU_Get_Roll_Now()*10000) & 0xff;
-	data_buffer[5] = ((int)(MPU_Get_Roll_Now()*10000) >> 8) & 0xff;
-	data_buffer[6] = (int)(MPU_Get_Pitch_Now()*10000) & 0xff;
-	data_buffer[7] = ((int)(MPU_Get_Pitch_Now()*10000) >> 8) & 0xff;
-	data_buffer[8] = (int)(MPU_Get_Yaw_Now()*10000) & 0xff;
-	data_buffer[9] = ((int)(MPU_Get_Yaw_Now()*10000) >> 8) & 0xff;
+	Proto_Put_U32_LE(&data_buffer[4], Proto_Now_Ms()); // timestamp horloge interne (ms, u32 LE)
+	data_buffer[8] = (int)(MPU_Get_Roll_Now()*10000) & 0xff;
+	data_buffer[9] = ((int)(MPU_Get_Roll_Now()*10000) >> 8) & 0xff;
+	data_buffer[10] = (int)(MPU_Get_Pitch_Now()*10000) & 0xff;
+	data_buffer[11] = ((int)(MPU_Get_Pitch_Now()*10000) >> 8) & 0xff;
+	data_buffer[12] = (int)(MPU_Get_Yaw_Now()*10000) & 0xff;
+	data_buffer[13] = ((int)(MPU_Get_Yaw_Now()*10000) >> 8) & 0xff;
 
 	for (i = 2; i < LENS-1; i++)
 	{

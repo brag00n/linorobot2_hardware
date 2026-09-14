@@ -207,7 +207,7 @@ enum packet_type_e
 
 
 //////////////////////////////////////////////////////////////////////////////////
-//ÄÚ²¿º¯ÊýÉùÃ÷
+//ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 void GPIO_INT_Config(void)
 {
@@ -965,7 +965,7 @@ int handle_char_input(char c)
     return 1;
 }
 
-// È¡³öÊý¾Ý
+// È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 void process_sensor_output()
 {
     signed long  long_quat[3] = { 0 };
@@ -1035,9 +1035,9 @@ void process_sensor_output()
             q23 = t2 * t3;
             q33 = t3 * t3;
 
-            values[0] = -asin(2 * (q02 - q13));                          // Roll ·­¹ö½Ç
-            values[1] = atan2(2 * (q03 + q12), (1 - 2 * (q22 + q33)));   // Pitch ¸©Ñö½Ç
-            values[2] = atan2(2 * (q01 + q23), (1 - 2 * (q11 + q22)));   // Yaw Æ«º½½Ç
+            values[0] = -asin(2 * (q02 - q13));                          // Roll ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+            values[1] = atan2(2 * (q03 + q12), (1 - 2 * (q22 + q33)));   // Pitch ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+            values[2] = atan2(2 * (q01 + q23), (1 - 2 * (q11 + q22)));   // Yaw Æ«ï¿½ï¿½ï¿½ï¿½
 
             if(usart_dbg)printf("Orientation\t x=%7.5f, y=%7.5f, z=%7.5f\r\n", values[0], values[1], values[2]);
 			memcpy(i20948_data.orientation,values,sizeof(values));
@@ -1582,7 +1582,7 @@ unsigned short Get_I2C_Retry()
     return RETRY_IN_MLSEC;
 }
 
-//³õÊ¼»¯ ÍÓÂÝÒÇÏà¹Ø²ÎÊý
+//ï¿½ï¿½Ê¼ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø²ï¿½ï¿½ï¿½
 int ICM_20948_Init(void)
 {
     unsigned char tx, rx;
@@ -1595,7 +1595,7 @@ int ICM_20948_Init(void)
     tx = 0x00;
     result |= inv_serial_interface_write_hook(0x7f, 1, &tx);
     tx = 0x80;
-    result |= inv_serial_interface_write_hook(0x06, 1, &tx); //¸´Î»
+    result |= inv_serial_interface_write_hook(0x06, 1, &tx); //ï¿½ï¿½Î»
     delay_ms(100);
     // App_Delay_ms(100);
     tx = 0x00;
@@ -1689,7 +1689,7 @@ int ICM_20948_Init(void)
     GPIO_INT_Config();
     init_state = 1;
 
-    //·µ»Ø³õÊ¼×´Ì¬
+    //ï¿½ï¿½ï¿½Ø³ï¿½Ê¼×´Ì¬
     return result;
 }
 
@@ -1803,7 +1803,7 @@ void self_test(void)
     self_test_done = 1;
 }
 
-//·µ»ØÖµ:ÎÂ¶ÈÖµ
+//ï¿½ï¿½ï¿½ï¿½Öµ:ï¿½Â¶ï¿½Öµ
 float ICM20948_Get_Temperature(void)
 {
     u8 buf[2];
@@ -1815,54 +1815,54 @@ float ICM20948_Get_Temperature(void)
     return temp;
 }
 
-// ½«ICM20948µÄÊý¾ÝÈ¡³öÀ´
+// ï¿½ï¿½ICM20948ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½
 void ICM20948_Get_Data(icm20948_data_t *data)
 {
 	// i20948_data.temperature = ICM20948_Get_Temperature();
 	memcpy(data,&i20948_data,sizeof(icm20948_data_t));
 }
 
-// ·µ»ØICM20948ÊÇ·ñ³õÊ¼»¯Íê³É
+// ï¿½ï¿½ï¿½ï¿½ICM20948ï¿½Ç·ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½
 uint8_t ICM20948_Get_Init_State(void)
 {
     return init_state;
 }
 
-// »ñÈ¡¼ÆÊýÖµ
+// ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½Öµ
 int get_tick_count(long long *count)
 {
     count[0] = g_ul_ms_ticks;
 	return 0;
 }
 
-// »ñÈ¡µ±Ç°·­¹ö½Ç
+// ï¿½ï¿½È¡ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 float ICM20948_Get_Roll_Now(void)
 {
-    return g_icm_data.orientation[0];         // ·µ»Ø»¡¶È
-    // return g_icm_data.orientation[0]*RtA;  // ·µ»Ø½Ç¶È
+    return g_icm_data.orientation[0];         // ï¿½ï¿½ï¿½Ø»ï¿½ï¿½ï¿½
+    // return g_icm_data.orientation[0]*RtA;  // ï¿½ï¿½ï¿½Ø½Ç¶ï¿½
 }
 
-// »ñÈ¡µ±Ç°¸©Ñö½Ç
+// ï¿½ï¿½È¡ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 float ICM20948_Get_Pitch_Now(void)
 {
-    return g_icm_data.orientation[1];         // ·µ»Ø»¡¶È
-    // return g_icm_data.orientation[1]*RtA;  // ·µ»Ø½Ç¶È
+    return g_icm_data.orientation[1];         // ï¿½ï¿½ï¿½Ø»ï¿½ï¿½ï¿½
+    // return g_icm_data.orientation[1]*RtA;  // ï¿½ï¿½ï¿½Ø½Ç¶ï¿½
 }
 
-// »ñÈ¡µ±Ç°Æ«º½½Ç
+// ï¿½ï¿½È¡ï¿½ï¿½Ç°Æ«ï¿½ï¿½ï¿½ï¿½
 float ICM20948_Get_Yaw_Now(void)
 {
-    return g_icm_data.orientation[2];         // ·µ»Ø»¡¶È
-    // return g_icm_data.orientation[2]*RtA;  // ·µ»Ø½Ç¶È
+    return g_icm_data.orientation[2];         // ï¿½ï¿½ï¿½Ø»ï¿½ï¿½ï¿½
+    // return g_icm_data.orientation[2]*RtA;  // ï¿½ï¿½ï¿½Ø½Ç¶ï¿½
 }
 
-// ICM20948¶ÁÈ¡Êý¾ÝµÄ
+// ICM20948ï¿½ï¿½È¡ï¿½ï¿½ï¿½Ýµï¿½
 void ICM20948_Read_Data_Handle(void)
 {
     if (hal.new_gyro == 1)
     {
         hal.new_gyro = 0;
-        fifo_handler();    //´¦Àíº¯Êý¿É·ÅÓÚÖÐ¶Ï
+        fifo_handler();    //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½É·ï¿½ï¿½ï¿½ï¿½Ð¶ï¿½
         ICM20948_Get_Data(&g_icm_data);
         // printf("Accel Data\t %8.5f,\t %8.5f,\t %8.5f\r\n", g_icm_data.accel_float[0], g_icm_data.accel_float[1], g_icm_data.accel_float[2]);
         // printf("Gyro Data\t %7.5f,\t %7.5f,\t %7.5f\r\n", g_icm_data.gyro_float[0], g_icm_data.gyro_float[1], g_icm_data.gyro_float[2]);
@@ -1873,36 +1873,37 @@ void ICM20948_Read_Data_Handle(void)
     g_ul_ms_ticks++;
 }
 
-// ·¢ËÍÔ­Ê¼Êý¾Ýµ½Ö÷¿Ø
+// ï¿½ï¿½ï¿½ï¿½Ô­Ê¼ï¿½ï¿½ï¿½Ýµï¿½ï¿½ï¿½ï¿½ï¿½
 void ICM20948_Send_Raw_Data(void)
 {
-    #define LEN        23
+    #define LEN        27
 	uint8_t data_buffer[LEN] = {0};
 	uint8_t i, checknum = 0;
 	data_buffer[0] = PTO_HEAD;
 	data_buffer[1] = PTO_DEVICE_ID-1;
-	data_buffer[2] = LEN-2; // ÊýÁ¿
-	data_buffer[3] = FUNC_REPORT_ICM_RAW; // ¹¦ÄÜÎ»
-	data_buffer[4] = (int)(g_icm_data.gyro_float[0]*1000) & 0xff;
-	data_buffer[5] = ((int)(g_icm_data.gyro_float[0]*1000) >> 8) & 0xff;
-	data_buffer[6] = (int)(g_icm_data.gyro_float[1]*1000) & 0xff;
-	data_buffer[7] = ((int)(g_icm_data.gyro_float[1]*1000) >> 8) & 0xff;
-	data_buffer[8] = (int)(g_icm_data.gyro_float[2]*1000) & 0xff;
-	data_buffer[9] = ((int)(g_icm_data.gyro_float[2]*1000) >> 8) & 0xff;
+	data_buffer[2] = LEN-2; // ï¿½ï¿½ï¿½ï¿½
+	data_buffer[3] = FUNC_REPORT_ICM_RAW; // ï¿½ï¿½ï¿½ï¿½Î»
+	Proto_Put_U32_LE(&data_buffer[4], Proto_Now_Ms()); // timestamp horloge interne (ms, u32 LE)
+	data_buffer[8] = (int)(g_icm_data.gyro_float[0]*1000) & 0xff;
+	data_buffer[9] = ((int)(g_icm_data.gyro_float[0]*1000) >> 8) & 0xff;
+	data_buffer[10] = (int)(g_icm_data.gyro_float[1]*1000) & 0xff;
+	data_buffer[11] = ((int)(g_icm_data.gyro_float[1]*1000) >> 8) & 0xff;
+	data_buffer[12] = (int)(g_icm_data.gyro_float[2]*1000) & 0xff;
+	data_buffer[13] = ((int)(g_icm_data.gyro_float[2]*1000) >> 8) & 0xff;
 
-	data_buffer[10] = (int)(g_icm_data.accel_float[0]*1000) & 0xff;
-	data_buffer[11] = ((int)(g_icm_data.accel_float[0]*1000) >> 8) & 0xff;
-	data_buffer[12] = (int)(g_icm_data.accel_float[1]*1000) & 0xff;
-	data_buffer[13] = ((int)(g_icm_data.accel_float[1]*1000) >> 8) & 0xff;
-	data_buffer[14] = (int)(g_icm_data.accel_float[2]*1000) & 0xff;
-	data_buffer[15] = ((int)(g_icm_data.accel_float[2]*1000) >> 8) & 0xff;
+	data_buffer[14] = (int)(g_icm_data.accel_float[0]*1000) & 0xff;
+	data_buffer[15] = ((int)(g_icm_data.accel_float[0]*1000) >> 8) & 0xff;
+	data_buffer[16] = (int)(g_icm_data.accel_float[1]*1000) & 0xff;
+	data_buffer[17] = ((int)(g_icm_data.accel_float[1]*1000) >> 8) & 0xff;
+	data_buffer[18] = (int)(g_icm_data.accel_float[2]*1000) & 0xff;
+	data_buffer[19] = ((int)(g_icm_data.accel_float[2]*1000) >> 8) & 0xff;
 
-	data_buffer[16] = (int)(g_icm_data.compass_float[0]*1000) & 0xff;
-	data_buffer[17] = ((int)(g_icm_data.compass_float[0]*1000) >> 8) & 0xff;
-	data_buffer[18] = (int)(g_icm_data.compass_float[1]*1000) & 0xff;
-	data_buffer[19] = ((int)(g_icm_data.compass_float[1]*1000) >> 8) & 0xff;
-	data_buffer[20] = (int)(g_icm_data.compass_float[2]*1000) & 0xff;
-	data_buffer[21] = ((int)(g_icm_data.compass_float[2]*1000) >> 8) & 0xff;
+	data_buffer[20] = (int)(g_icm_data.compass_float[0]*1000) & 0xff;
+	data_buffer[21] = ((int)(g_icm_data.compass_float[0]*1000) >> 8) & 0xff;
+	data_buffer[22] = (int)(g_icm_data.compass_float[1]*1000) & 0xff;
+	data_buffer[23] = ((int)(g_icm_data.compass_float[1]*1000) >> 8) & 0xff;
+	data_buffer[24] = (int)(g_icm_data.compass_float[2]*1000) & 0xff;
+	data_buffer[25] = ((int)(g_icm_data.compass_float[2]*1000) >> 8) & 0xff;
 
 	for (i = 2; i < LEN-1; i++)
 	{
@@ -1912,22 +1913,23 @@ void ICM20948_Send_Raw_Data(void)
 	USART1_Send_ArrayU8(data_buffer, sizeof(data_buffer));
 }
 
-// ·¢ËÍ×ËÌ¬½ÇÊý¾Ýµ½Ö÷¿Ø£¬µ¥Î»£º»¡¶È
+// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì¬ï¿½ï¿½ï¿½ï¿½ï¿½Ýµï¿½ï¿½ï¿½ï¿½Ø£ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 void ICM20948_Send_Attitude_Data(void)
 {
-    #define LENS        11
+    #define LENS        15
 	uint8_t data_buffer[LENS] = {0};
 	uint8_t i, checknum = 0;
 	data_buffer[0] = PTO_HEAD;
 	data_buffer[1] = PTO_DEVICE_ID-1;
-	data_buffer[2] = LENS-2; // ÊýÁ¿
-	data_buffer[3] = FUNC_REPORT_IMU_ATT;    // ¹¦ÄÜÎ»
-	data_buffer[4] = (int)(g_icm_data.orientation[0]*10000) & 0xff;
-	data_buffer[5] = ((int)(g_icm_data.orientation[0]*10000) >> 8) & 0xff;
-	data_buffer[6] = (int)(g_icm_data.orientation[1]*10000) & 0xff;
-	data_buffer[7] = ((int)(g_icm_data.orientation[1]*10000) >> 8) & 0xff;
-	data_buffer[8] = (int)(g_icm_data.orientation[2]*10000) & 0xff;
-	data_buffer[9] = ((int)(g_icm_data.orientation[2]*10000) >> 8) & 0xff;
+	data_buffer[2] = LENS-2; // ï¿½ï¿½ï¿½ï¿½
+	data_buffer[3] = FUNC_REPORT_IMU_ATT;    // ï¿½ï¿½ï¿½ï¿½Î»
+	Proto_Put_U32_LE(&data_buffer[4], Proto_Now_Ms()); // timestamp horloge interne (ms, u32 LE)
+	data_buffer[8] = (int)(g_icm_data.orientation[0]*10000) & 0xff;
+	data_buffer[9] = ((int)(g_icm_data.orientation[0]*10000) >> 8) & 0xff;
+	data_buffer[10] = (int)(g_icm_data.orientation[1]*10000) & 0xff;
+	data_buffer[11] = ((int)(g_icm_data.orientation[1]*10000) >> 8) & 0xff;
+	data_buffer[12] = (int)(g_icm_data.orientation[2]*10000) & 0xff;
+	data_buffer[13] = ((int)(g_icm_data.orientation[2]*10000) >> 8) & 0xff;
 
 	for (i = 2; i < LENS-1; i++)
 	{

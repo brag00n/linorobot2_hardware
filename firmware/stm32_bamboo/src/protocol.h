@@ -92,6 +92,12 @@ uint8_t Get_Request_Flag(void);
 void Request_Data(uint8_t request, uint8_t parm);
 void Send_Request_Data(void);
 
+/* Timestamp horloge interne (ms) prefixe des trames de metriques (convention carte GrovePi).
+   Proto_Now_Ms : compteur monotone ms (tick FreeRTOS 1 kHz, u32, rollover ~49,7 j).
+   Proto_Put_U32_LE : ecrit un u32 en little-endian dans buf[0..3]. */
+uint32_t Proto_Now_Ms(void);
+void Proto_Put_U32_LE(uint8_t *buf, uint32_t value);
+
 void Upper_CAN_Execute_Command(uint8_t func, uint8_t* parm);
 
 
