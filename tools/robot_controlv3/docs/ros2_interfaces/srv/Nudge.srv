@@ -1,0 +1,10 @@
+# Deplacement RELATIF pan/tilt (deg). Remplace ServoCmd kind=nudge_pan/nudge_tilt
+# (motif `seq` sur topic -> service req/rep). center et switch_camera, eux, n'ont
+# pas d'argument -> utiliser std_srvs/Trigger.
+
+float64 pan_delta     # pas relatif pan  (deg, + = gauche selon invert_pan)
+float64 tilt_delta    # pas relatif tilt (deg)
+---
+bool    success
+float64 angle_pan     # angle pan resultant (apres bornage)
+float64 angle_tilt    # angle tilt resultant
