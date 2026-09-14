@@ -316,7 +316,7 @@ def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
     fresh = bool(present and gp.ultra_age is not None and gp.ultra_age < 1.5)
     ver = (gp.version if (gp and gp.version) else "") if present else ""
     port = f"{port_name} {ver}".strip() if present else "absente"
-    yc = _card_frame(frame, x, y, 320, 146, "GROVE", port, present, fresh)
+    yc = _card_frame(frame, x, y, 320, 176, "GROVE", port, present, fresh)
 
     if _hmi(mcfg, "grove_ultra"):
         # --- ultrasons : 2x2, valeur mm (largeur fixe) + barre de proximite ---
@@ -423,7 +423,7 @@ def _draw_train_log(frame, tr):
         return
     fw, fh = frame.shape[1], frame.shape[0]
     m, w, lh = 8, 380, 15
-    band_top, band_bot = 226, fh - 158          # entre STM32 (haut-D) et GROVE (bas-D)
+    band_top, band_bot = 226, fh - 196          # entre STM32 (haut-D) et GROVE (bas-D)
     avail = max(60, band_bot - band_top)
     maxlines = max(3, min(12, (avail - 46) // lh))
     show = lines[-maxlines:]
@@ -565,7 +565,7 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                    tstate, mcfg=mcfg)
     _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
                    motion_on, smooth, mcfg=mcfg)
-    _draw_grove_card(frame, fw - 320 - m, fh - 146 - m, gp_port, gp, mcfg=mcfg)
+    _draw_grove_card(frame, fw - 320 - m, fh - 176 - 16, gp_port, gp, mcfg=mcfg)
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
                       getattr(pt, "deadzone", None), accent=btn_accent)
 
