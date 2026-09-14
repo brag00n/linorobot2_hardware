@@ -58,6 +58,10 @@ float PID_Calc_One_Motor(uint8_t motor_id, float now_speed);
 void PID_Set_Motor_Target(uint8_t motor_id, float target);
 void PID_Clear_Motor(uint8_t motor_id);
 void PID_Set_Motor_Parm(uint8_t motor_id, float kp, float ki, float kd);
+void PID_Set_Motor_Slaved(uint8_t motor_id, uint8_t on);
+uint8_t PID_Get_Motor_Slaved(uint8_t motor_id);
+int8_t PID_Slave_Partner(uint8_t motor_id);
+int8_t PID_Slave_Sign(uint8_t motor_id);
 void PID_Send_Parm_Active(uint8_t index);
 
 

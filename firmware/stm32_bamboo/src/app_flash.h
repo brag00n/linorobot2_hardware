@@ -51,6 +51,11 @@
 // 如果F_RESET_ALL_ADDR地址读出来的值不是FLASH_RESET_OK，则自动恢复所有值为默认。
 #define FLASH_RESET_OK               0xAA55
 
+// Marqueur flash "moteur esclave" (encodeur HS) ecrit dans les 3 mots PID du moteur.
+// Distinct de 0xFFFF (flash vierge) pour ne PAS confondre un slot non ecrit avec un
+// ordre explicite de desactivation. Persiste l'etat esclave au boot (Flash_PID_Init).
+#define F_PID_SLAVED_MARK            0xFFFE
+
 
 /******************************Flash宏定义变量配置******************************************/
 
@@ -63,6 +68,7 @@ void Flash_Set_CarType(uint8_t carType);
 void Flash_Set_Auto_Report(uint8_t enable);
 
 void Flash_Set_PID(uint8_t motor_id, float kp, float ki, float kd);
+void Flash_Set_PID_Slaved(uint8_t motor_id);
 
 void Flash_Set_Yaw_PID(float kp, float ki, float kd);
 

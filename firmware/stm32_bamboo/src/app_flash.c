@@ -134,35 +134,39 @@ static void Flash_Auto_Report_Init(void)
 /*自动上报开关******************************************************************/
 
 /*PID参数数据******************************************************************/
-// PID参数初始化
+// PID参数初始化 : un jeu de gains PAR moteur (offset 6*i dans le bloc reserve).
 static void Flash_PID_Init(void)
 {
     float kp = 0, ki = 0, kd = 0;
-    // for (uint8_t i = 0; i < 4; i++)
-    // {
-    //     Flash_Read_PID(i, &kp, &ki, &kd);
-    //     DEBUG("Read PID-M%d:%.3f, %.3f, %.3f\n", i+1, kp, ki, kd);
-    //     if (kp>10 || ki>10 || kd>10)
-    //     {
-    //         kp = PID_DEF_KP;
-    //         ki = PID_DEF_KI;
-    //         kd = PID_DEF_KD;
-    //         Flash_Set_PID(i, kp, ki, kd);
-    //     }
-    //     PID_Set_Motor_Parm(i, kp, ki, kd);
-    //     kp = 0, ki = 0, kd = 0;
-    // }
-    Flash_Read_PID(MAX_MOTOR, &kp, &ki, &kd);
-    printf("FRead PID:%.3f, %.3f, %.3f\n", kp, ki, kd);
-    if (kp>10 || ki>10 || kd>10)
+    for (uint8_t i = 0; i < 4; i++)
     {
-        kp = PID_DEF_KP;
-        ki = PID_DEF_KI;
-        kd = PID_DEF_KD;
-        Flash_Set_PID(MAX_MOTOR, kp, ki, kd);
+        uint16_t raw[3] = {0};
+        Flash_Read(F_PID_ADDR + 6 * i, raw, 3);
+        printf("FRead PID-M%d:%d, %d, %d\n", i+1, raw[0], raw[1], raw[2]);
+
+        // Marqueur esclave (encodeur HS) : desactiver le PID, recopie du voisin.
+        if (raw[0] == F_PID_SLAVED_MARK && raw[1] == F_PID_SLAVED_MARK && raw[2] == F_PID_SLAVED_MARK)
+        {
+            PID_Set_Motor_Slaved(i, 1);
+            continue;
+        }
+
+        kp = raw[0] / 1000.0f;
+        ki = raw[1] / 1000.0f;
+        kd = raw[2] / 1000.0f;
+        // Slot vierge (0xFFFF) ou aberrant -> defauts (et on les persiste).
+        if (raw[0] == 0xFFFF || raw[1] == 0xFFFF || raw[2] == 0xFFFF ||
+            kp > 10 || ki > 10 || kd > 10)
+        {
+            kp = PID_DEF_KP;
+            ki = PID_DEF_KI;
+            kd = PID_DEF_KD;
+            Flash_Set_PID(i, kp, ki, kd);
+        }
+        PID_Set_Motor_Slaved(i, 0);
+        PID_Set_Motor_Parm(i, kp, ki, kd);
+        kp = 0, ki = 0, kd = 0;
     }
-    PID_Set_Motor_Parm(MAX_MOTOR, kp, ki, kd);
-    kp = 0, ki = 0, kd = 0;
 
     Flash_Read_Yaw_PID(&kp, &ki, &kd);
     if (kp>10 || ki>10 || kd>10)
@@ -179,8 +183,7 @@ static void Flash_PID_Init(void)
 static void Flash_Read_PID(uint8_t motor_id, float* kp, float* ki, float* kd)
 {
     uint16_t pid_1k[3] = {0};
-    // uint16_t offset = 6 * motor_id;
-    uint16_t offset = 0;
+    uint16_t offset = 6 * (motor_id >= MAX_MOTOR ? 0 : motor_id);
     Flash_Read(F_PID_ADDR + offset, pid_1k, 3);
     *kp = pid_1k[0] / 1000.0;
     *ki = pid_1k[1] / 1000.0;
@@ -188,29 +191,42 @@ static void Flash_Read_PID(uint8_t motor_id, float* kp, float* ki, float* kd)
     // DEBUG("FRead PID:%d, %d, %d\n", pid_1k[0], pid_1k[1], pid_1k[2]);
 }
 
-// 设置PID参数，保留三位小数。
+// 设置PID参数，保留三位小数。motor_id=0..3 un moteur, =MAX_MOTOR tous (bloc 24 o).
 void Flash_Set_PID(uint8_t motor_id, float kp, float ki, float kd)
 {
     if (motor_id > MAX_MOTOR) return;
-    uint16_t pid_1k[] = {1000*kp, 1000*ki, 1000*kd};
+    uint16_t pid_1k[3] = {1000*kp, 1000*ki, 1000*kd};
 
-    // if (motor_id == MAX_MOTOR)
-    // {
-    //     uint16_t all_pid_1k[] = {
-    //         pid_1k[0], pid_1k[1], pid_1k[2], 
-    //         pid_1k[0], pid_1k[1], pid_1k[2], 
-    //         pid_1k[0], pid_1k[1], pid_1k[2], 
-    //         pid_1k[0], pid_1k[1], pid_1k[2]};
-    //     Flash_Write(F_PID_ADDR, all_pid_1k, sizeof(all_pid_1k)/sizeof(all_pid_1k[0]));
-    // }
-    // else
-    // {
-    //     uint16_t offset = 6 * motor_id;
-    //     Flash_Write(F_PID_ADDR + offset, pid_1k, 3);
-    // }
-    uint16_t offset = 0;
-    Flash_Write(F_PID_ADDR + offset, pid_1k, 3);
-    DEBUG("FSet PID:%d, %d, %d, %d\n", motor_id+1, pid_1k[0], pid_1k[1], pid_1k[2]);
+    if (motor_id == MAX_MOTOR)
+    {
+        // Ecrit les 4 slots en preservant ceux marques esclave (sentinelle) : un
+        // reglage "tous" ne doit pas ecraser l'etat encodeur-HS d'un moteur (M2).
+        uint16_t all_pid_1k[12];
+        Flash_Read(F_PID_ADDR, all_pid_1k, 12);
+        for (int i = 0; i < 4; i++)
+        {
+            if (PID_Get_Motor_Slaved(i)) continue;
+            all_pid_1k[3*i + 0] = pid_1k[0];
+            all_pid_1k[3*i + 1] = pid_1k[1];
+            all_pid_1k[3*i + 2] = pid_1k[2];
+        }
+        Flash_Write(F_PID_ADDR, all_pid_1k, 12);
+    }
+    else
+    {
+        uint16_t offset = 6 * motor_id;
+        Flash_Write(F_PID_ADDR + offset, pid_1k, 3);
+    }
+    DEBUG("FSet PID M%d:%d, %d, %d\n", motor_id+1, pid_1k[0], pid_1k[1], pid_1k[2]);
+}
+
+// Persiste l'etat "esclave" d'un moteur (encodeur HS) : marqueur distinct de 0xFFFF.
+void Flash_Set_PID_Slaved(uint8_t motor_id)
+{
+    if (motor_id >= MAX_MOTOR) return;
+    uint16_t mark[3] = {F_PID_SLAVED_MARK, F_PID_SLAVED_MARK, F_PID_SLAVED_MARK};
+    Flash_Write(F_PID_ADDR + 6 * motor_id, mark, 3);
+    DEBUG("FSet PID M%d -> SLAVED\n", motor_id+1);
 }
 
 // 读取偏航角PID数据，保留三位小数
@@ -436,6 +452,7 @@ void Flash_Set_Auto_Report(uint8_t enable){}
 
 
 void Flash_Set_PID(uint8_t motor_id, float kp, float ki, float kd){}
+void Flash_Set_PID_Slaved(uint8_t motor_id){}
 
 void Flash_Set_Yaw_PID(float kp, float ki, float kd){}
 

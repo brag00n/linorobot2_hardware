@@ -18,13 +18,21 @@
 static float speed_fb = 0;
 static float speed_spin = 0;
 
-static int speed_L1_setup = 0;
-static int speed_L2_setup = 0;
-static int speed_R1_setup = 0;
-static int speed_R2_setup = 0;
+// Consignes vitesse par LIGNE (repere marche-avant, avant l'application du DIR de cablage) :
+//   ligne A = {M1(0), M3(2)}, ligne B = {M2(1), M4(3)} (cf app_pid.c).
+static int speed_A_setup = 0;
+static int speed_B_setup = 0;
 
 static int g_offset_yaw = 0;
 static uint16_t g_speed_setup = 0;
+
+// Applique le DIR de cablage (marche avant = (-,+,+,-)) et envoie les 4 consignes PID.
+// sA/sB sont exprimes dans le repere marche-avant (>0 = avancer) ; le signe electrique
+// par moteur est porte ici : M1=-sA, M2=+sB, M3=+sA, M4=-sB.
+static void Fourwheel_Apply(int sA, int sB)
+{
+    Motion_Set_Speed(-sA, +sB, +sA, -sB);
+}
 
 // X轴速度(前正后负：±1000)，Y轴速度(0)，旋转速度(左正右负：±5000)
 void Fourwheel_Ctrl(int16_t V_x, int16_t V_y, int16_t V_z, uint8_t adjust)
@@ -39,21 +47,16 @@ void Fourwheel_Ctrl(int16_t V_x, int16_t V_y, int16_t V_z, uint8_t adjust)
         return;
     }
 
-    speed_L1_setup = speed_fb - speed_spin;
-    speed_L2_setup = speed_fb - speed_spin;
-    speed_R1_setup = speed_fb + speed_spin;
-    speed_R2_setup = speed_fb + speed_spin;
+    // Repere marche-avant : ligne A ralentit, ligne B accelere quand Vz>0 (rotation).
+    speed_A_setup = speed_fb - speed_spin;
+    speed_B_setup = speed_fb + speed_spin;
 
-    if (speed_L1_setup > 1000) speed_L1_setup = 1000;
-    if (speed_L1_setup < -1000) speed_L1_setup = -1000;
-    if (speed_L2_setup > 1000) speed_L2_setup = 1000;
-    if (speed_L2_setup < -1000) speed_L2_setup = -1000;
-    if (speed_R1_setup > 1000) speed_R1_setup = 1000;
-    if (speed_R1_setup < -1000) speed_R1_setup = -1000;
-    if (speed_R2_setup > 1000) speed_R2_setup = 1000;
-    if (speed_R2_setup < -1000) speed_R2_setup = -1000;
-    
-    Motion_Set_Speed(speed_L1_setup, speed_L2_setup, speed_R1_setup, speed_R2_setup);
+    if (speed_A_setup > 1000) speed_A_setup = 1000;
+    if (speed_A_setup < -1000) speed_A_setup = -1000;
+    if (speed_B_setup > 1000) speed_B_setup = 1000;
+    if (speed_B_setup < -1000) speed_B_setup = -1000;
+
+    Fourwheel_Apply(speed_A_setup, speed_B_setup);
 }
 
 
@@ -74,21 +77,16 @@ void Fourwheel_Yaw_Calc(float yaw)
     }
     #endif
 
-    int speed_L1 = speed_L1_setup - g_offset_yaw;
-    int speed_L2 = speed_L2_setup - g_offset_yaw;
-    int speed_R1 = speed_R1_setup + g_offset_yaw;
-    int speed_R2 = speed_R2_setup + g_offset_yaw;
+    // Correction de lacet dans le repere marche-avant : ligne A -= offset, ligne B += offset.
+    int speed_A = speed_A_setup - g_offset_yaw;
+    int speed_B = speed_B_setup + g_offset_yaw;
 
-    if (speed_L1 > 1000) speed_L1 = 1000;
-    if (speed_L1 < -1000) speed_L1 = -1000;
-    if (speed_L2 > 1000) speed_L2 = 1000;
-    if (speed_L2 < -1000) speed_L2 = -1000;
-    if (speed_R1 > 1000) speed_R1 = 1000;
-    if (speed_R1 < -1000) speed_R1 = -1000;
-    if (speed_R2 > 1000) speed_R2 = 1000;
-    if (speed_R2 < -1000) speed_R2 = -1000;
-    
-    Motion_Set_Speed(speed_L1, speed_L2, speed_R1, speed_R2);
+    if (speed_A > 1000) speed_A = 1000;
+    if (speed_A < -1000) speed_A = -1000;
+    if (speed_B > 1000) speed_B = 1000;
+    if (speed_B < -1000) speed_B = -1000;
+
+    Fourwheel_Apply(speed_A, speed_B);
 }
 
 

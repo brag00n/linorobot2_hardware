@@ -22,6 +22,13 @@ int g_Encoder_All_Offset[MAX_MOTOR] = {0};
 
 uint8_t g_start_ctrl = 0;
 
+// Watchdog cmd_vel : en boucle fermee (g_start_ctrl), on compte les ticks 10ms depuis
+// la derniere consigne de vitesse. Sans nouvelle trame FUNC_MOTION/FUNC_CAR_RUN avant
+// MOTION_WD_TICKS, on freine (securite si l'app hote plante en plein mouvement).
+// L'hote republie cmd_vel a ~10 Hz (100 ms) : 40 ticks = 400 ms tolere ~3 trames perdues.
+#define MOTION_WD_TICKS   (40)
+static volatile uint16_t g_motion_wd = 0;
+
 car_data_t car_data;
 motor_data_t motor_data;
 
@@ -150,6 +157,7 @@ void Motion_Stop(uint8_t brake)
 void Motion_Set_Speed(int16_t speed_m1, int16_t speed_m2, int16_t speed_m3, int16_t speed_m4)
 {
     g_start_ctrl = 1;
+    g_motion_wd = 0; // nourrit le watchdog cmd_vel
     motor_data.speed_set[0] = speed_m1;
     motor_data.speed_set[1] = speed_m2;
     motor_data.speed_set[2] = speed_m3;
@@ -212,6 +220,14 @@ void Motion_Get_Speed(car_data_t* car)
     {
         speed_mm[i] = (g_Encoder_All_Offset[i]) * 100 * circle_mm / circle_pulse;
     }
+    // Moteur esclave (encodeur HS) : vitesse mesuree fausse (~0). On la remplace par
+    // celle de la roue de meme ligne, avec le signe de recopie (miroir av/ar -> -1),
+    // pour ne pas fausser l'odometrie ni le retour PID.
+    for (i = 0; i < MAX_MOTOR; i++)
+    {
+        if (PID_Get_Motor_Slaved(i))
+            speed_mm[i] = PID_Slave_Sign(i) * speed_mm[PID_Slave_Partner(i)];
+    }
     switch (g_car_type)
     {
     case CAR_MECANUM:
@@ -230,9 +246,18 @@ void Motion_Get_Speed(car_data_t* car)
     }
     case CAR_FOURWHEEL:
     {
-        car->Vx = (speed_mm[0] + speed_mm[1] + speed_mm[2] + speed_mm[3]) / 4;
+        // Passage en repere marche-avant : f[i] = DIR[i]*speed_mm[i], DIR=(-,+,+,-)
+        // (encodeur = signe PWM ; en marche avant M1/M4 sont a -PWM, M2/M3 a +PWM).
+        // Ligne A={M1(0),M3(2)}, ligne B={M2(1),M4(3)} ; Vz = (fB - fA)/2/APB.
+        float fA_f = -speed_mm[0]; // M1
+        float fA_r = +speed_mm[2]; // M3
+        float fB_f = +speed_mm[1]; // M2
+        float fB_r = -speed_mm[3]; // M4
+        float fA = (fA_f + fA_r) / 2.0f;
+        float fB = (fB_f + fB_r) / 2.0f;
+        car->Vx = (fA + fB) / 2.0f;
         car->Vy = 0;
-        car->Vz = -(speed_mm[0] + speed_mm[1] - speed_mm[2] - speed_mm[3]) / 4.0f / robot_APB * 1000;
+        car->Vz = (fB - fA) / 2.0f / robot_APB * 1000;
         break;
     }
     case CAR_ACKERMAN:
@@ -526,6 +551,12 @@ void Motion_Handle(void)
 
     if (g_start_ctrl)
     {
+        // Watchdog cmd_vel : freine si plus aucune consigne recue (app hote plantee).
+        if (++g_motion_wd >= MOTION_WD_TICKS)
+        {
+            Motion_Stop(STOP_BRAKE); // remet g_start_ctrl=0 et g_motion_wd=0
+            return;
+        }
         Motion_Set_Pwm(motor_data.speed_pwm[0], motor_data.speed_pwm[1], motor_data.speed_pwm[2], motor_data.speed_pwm[3]);
     }
 }

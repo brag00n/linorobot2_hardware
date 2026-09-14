@@ -11,6 +11,21 @@
 
 motor_pid_t pid_motor[4];
 
+// Etat "esclave" par moteur : 1 = encodeur HS, PID desactive, PWM recopie du
+// partenaire de meme cote. Sur ce robot M2 (idx 1) a l'encodeur intermittent -> esclave de M3.
+uint8_t pid_slaved[4] = {0};
+
+// Cartographie physique mesuree au banc (2026-09-13, cablage final), roues en l'air :
+//   M1 avant-ligneA, M2 avant-ligneB, M3 arriere-ligneA, M4 arriere-ligneB.
+//   Lignes (cotes) : A = {M1(0), M3(2)}, B = {M2(1), M4(3)}.
+//   Marche avant DIR = (-,+,+,-) : dans une meme ligne, l'avant et l'arriere sont
+//   montes en MIROIR (M1 avant a -PWM, M3 avant a +PWM ; M2 avant a +PWM, M4 avant a
+//   -PWM). Le cote gauche/droite absolu est cale au banc (IMU), pas depuis ce repere.
+// Partenaire de recopie d'un moteur esclave = l'autre roue de la MEME ligne ; signe
+// oppose (miroir av/ar -> DIR[i]*DIR[partner] = -1).
+static const int8_t SLAVE_PARTNER[4] = { 2, 3, 0, 1 }; // 0<->2 (ligne A), 1<->3 (ligne B)
+static const int8_t SLAVE_SIGN[4]    = { -1, -1, -1, -1 };
+
 // YAW偏航角
 PID pid_Yaw = {0, 0.4, 0, 0.1, 0, 0, 0};
 
@@ -137,19 +152,24 @@ float PID_Location_Calc(motor_pid_t *pid, float actual_val)
 
 
 // PID计算输出值
+// 2 passes : les moteurs regules (encodeur valide) d'abord, puis les esclaves
+// (encodeur HS) qui recopient le PWM de leur partenaire de meme cote AVEC inversion
+// de signe (miroir av/ar). Sans ca, un moteur a encodeur mort verrait une erreur
+// constante -> emballement PWM.
 void PID_Calc_Motor(motor_data_t* motor)
 {
     int i;
-    // float pid_out[4] = {0};
-    // for (i = 0; i < MAX_MOTOR; i++)
-    // {
-    //     pid_out[i] = PID_Location_Calc(&pid_motor[i], 0);
-    //     PID_Set_Motor_Target(i, pid_out[i]);
-    // }
-    
+    // Passe 1 : moteurs regules
     for (i = 0; i < MAX_MOTOR; i++)
     {
-        motor->speed_pwm[i] = PID_Incre_Calc(&pid_motor[i], motor->speed_mm_s[i]);
+        if (!pid_slaved[i])
+            motor->speed_pwm[i] = PID_Incre_Calc(&pid_motor[i], motor->speed_mm_s[i]);
+    }
+    // Passe 2 : moteurs esclaves -> recopie du partenaire meme cote (signe oppose)
+    for (i = 0; i < MAX_MOTOR; i++)
+    {
+        if (pid_slaved[i])
+            motor->speed_pwm[i] = SLAVE_SIGN[i] * motor->speed_pwm[SLAVE_PARTNER[i]];
     }
 }
 
@@ -208,6 +228,36 @@ void PID_Clear_Motor(uint8_t motor_id)
         pid_motor[motor_id].err_next = 0.0;
         pid_motor[motor_id].integral = 0.0;
     }
+}
+
+// Active/desactive le mode esclave d'un moteur (encodeur HS). En esclave, son PID
+// n'est plus calcule et son PWM recopie celui du voisin de meme cote (cf PID_Calc_Motor).
+void PID_Set_Motor_Slaved(uint8_t motor_id, uint8_t on)
+{
+    if (motor_id >= MAX_MOTOR) return;
+    pid_slaved[motor_id] = on ? 1 : 0;
+    PID_Clear_Motor(motor_id); // reset propre (pwm/err/integral) au basculement
+}
+
+// Retourne l'etat esclave d'un moteur (0/1).
+uint8_t PID_Get_Motor_Slaved(uint8_t motor_id)
+{
+    if (motor_id >= MAX_MOTOR) return 0;
+    return pid_slaved[motor_id];
+}
+
+// Partenaire de recopie (roue de meme cote) d'un moteur esclave.
+int8_t PID_Slave_Partner(uint8_t motor_id)
+{
+    if (motor_id >= MAX_MOTOR) return -1;
+    return SLAVE_PARTNER[motor_id];
+}
+
+// Signe de recopie (miroir av/ar -> -1) d'un moteur esclave.
+int8_t PID_Slave_Sign(uint8_t motor_id)
+{
+    if (motor_id >= MAX_MOTOR) return 1;
+    return SLAVE_SIGN[motor_id];
 }
 
 // 设置PID目标速度，单位为：mm/s

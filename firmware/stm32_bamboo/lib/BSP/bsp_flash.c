@@ -37,22 +37,39 @@ static uint8_t Flash_GetStatus(void)
 }
 
 //等待操作完成
-//time:要延时的长短
-//返回值:状态.
+//time:参数保留(兼容旧调用),实际以硬件 BSY 位为准.
+//返回值:0=OK, 2=PGERR, 3=WRPRTERR, 0xff=TIMEOUT
+//
+// FIX (2026-09-13) : l'ancienne implementation temporisait par une boucle
+// logicielle VIDE non-volatile (`for(i=0;i<10;i++);`). Le plafond passe en
+// argument (0x5FFF pour l'effacement) etait donc calibre en CYCLES de boucle,
+// pas en temps reel, et pouvait EXPIRER AVANT la fin d'un effacement de page
+// (~20-40 ms). Consequence : l'effacement rendait la main trop tot (PER efface
+// pendant que BSY=1), puis Flash_WriteHalfWord voyait la flash encore occupee
+// et SAUTAIT les ecritures -> secteur efface mais jamais reprogramme (config
+// perdue au reboot) + FPEC laissee incoherente (hang). On attend desormais le
+// VRAI bit materiel BSY, avec un garde-fou volatile insensible a -O (~>=100ms
+// @72MHz), et on nettoie les flags d'erreur collants (rc_w1) pour ne pas
+// bloquer les operations suivantes.
 static uint8_t Flash_WaitDone(uint16_t time)
 {
-	uint8_t res, i;
-	do
+	volatile uint32_t guard = 0x00A00000; // borne large (~1s @72MHz), sortie des que BSY=0
+	(void)time;
+	while ((FLASH->SR & (1 << 0)) && guard) // BSY
+		guard--;
+	if (FLASH->SR & (1 << 2)) // PGERR : efface le flag (ecrire 1) et signale
 	{
-		res = Flash_GetStatus();
-		if (res != 1)
-			break; //非忙,无需等待了,直接退出.
-		for (i = 0; i < 10; i++); // 增加延迟
-		time--;
-	} while (time);
-	if (time == 0)
-		res = 0xff; //TIMEOUT
-	return res;
+		FLASH->SR |= (1 << 2);
+		return 2;
+	}
+	if (FLASH->SR & (1 << 4)) // WRPRTERR : efface le flag et signale
+	{
+		FLASH->SR |= (1 << 4);
+		return 3;
+	}
+	if (guard == 0)
+		return 0xff; //TIMEOUT
+	return 0;
 }
 
 

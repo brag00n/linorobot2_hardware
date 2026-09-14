@@ -559,30 +559,34 @@ void Upper_Data_Parse(uint8_t *data_buf, uint8_t num)
 		uint16_t ki_recv = *(data_buf + 7) << 8 | *(data_buf + 6);
 		uint16_t kd_recv = *(data_buf + 9) << 8 | *(data_buf + 8);
 		uint8_t args = *(data_buf + 10);
-		float kp = kp_recv / 1000.0;
-		float ki = ki_recv / 1000.0;
-		float kd = kd_recv / 1000.0;
-		DEBUG("pid:%.2f, %.2f, %.2f, args:0x%02X\n", kp, ki, kd, args);
-		PID_Set_Motor_Parm(MAX_MOTOR, kp, ki, kd);
-		if (args == SAVE_VERIFY)
+
+		// args : quartet haut = moteur (0=tous, 1..4=un moteur), quartet bas = save (0x0F).
+		uint8_t motor_x = (args >> 4) & 0x0F;
+		uint8_t save    = ((args & 0x0F) == 0x0F);
+		// Compat legacy : args==SAVE_VERIFY (0x5F) => regler + sauver TOUS.
+		if (args == SAVE_VERIFY) { motor_x = 0; save = 1; }
+		if (motor_x > MAX_MOTOR) break; // selecteur invalide
+		uint8_t id = (motor_x == 0) ? MAX_MOTOR : (motor_x - 1);
+
+		// Sentinelle 0xFFFF sur les 3 gains = desactiver le PID de ce moteur (encodeur HS)
+		// et l'asservir en recopie sur son voisin de meme cote (cf PID_Calc_Motor).
+		if (kp_recv == 0xFFFF && ki_recv == 0xFFFF && kd_recv == 0xFFFF)
 		{
-			Flash_Set_PID(MAX_MOTOR, kp, ki, kd);
+			if (id == MAX_MOTOR) break; // sentinelle "tous" interdite
+			DEBUG("pid M%d -> slaved, save:%d\n", id+1, save);
+			PID_Set_Motor_Slaved(id, 1);
+			if (save) Flash_Set_PID_Slaved(id);
 		}
-		// uint8_t forever = args & 0x0F;
-		// uint8_t motor_x = (args >> 4) & 0x0F;
-		// if (motor_x <= MAX_MOTOR)
-		// {
-		// 	uint8_t id = MAX_MOTOR;
-		// 	if(motor_x > 0)
-		// 	{
-		// 		id = motor_x - 1;
-		// 	}
-		// 	PID_Set_Motor_Parm(id, kp, ki, kd);
-		// 	if (forever == 0x0F)
-		// 	{
-		// 		Flash_Set_PID(id, kp, ki, kd);
-		// 	}
-		// }
+		else
+		{
+			float kp = kp_recv / 1000.0;
+			float ki = ki_recv / 1000.0;
+			float kd = kd_recv / 1000.0;
+			DEBUG("pid M%d:%.2f, %.2f, %.2f, save:%d\n", id+1, kp, ki, kd, save);
+			if (id != MAX_MOTOR) PID_Set_Motor_Slaved(id, 0); // gains reels -> ré-active la regul
+			PID_Set_Motor_Parm(id, kp, ki, kd);
+			if (save) Flash_Set_PID(id, kp, ki, kd);
+		}
 		break;
 	}
 
