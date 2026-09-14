@@ -8,4 +8,4 @@ execute bien le dernier code (evite les faux diagnostics « code non recharge »
 Format : MAJEUR.MINEUR.CORRECTIF (SemVer souple, sans signification stricte).
 """
 
-APP_VERSION = "3.6.1"
+APP_VERSION = "3.6.2"

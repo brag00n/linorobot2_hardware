@@ -34,4 +34,9 @@ class BoardNode(Node):
             battery=snap.get("battery"), yaw=snap.get("yaw"),
             roll=snap.get("roll"), pitch=snap.get("pitch"),
             vx=snap.get("vx", 0.0), vy=snap.get("vy", 0.0), vz=snap.get("vz", 0.0),
-            rpm=rpm, ok=snap.get("ok", 0), bad=snap.get("bad", 0)))
+            rpm=rpm,
+            ts_speed=snap.get("ts_speed"), ts_imu=snap.get("ts_imu"),
+            ts_enc=snap.get("ts_enc"),
+            speed_age=snap.get("speed_age"), imu_age=snap.get("imu_age"),
+            enc_age=snap.get("enc_age"),
+            ok=snap.get("ok", 0), bad=snap.get("bad", 0)))

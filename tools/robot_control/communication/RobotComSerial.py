@@ -31,7 +31,7 @@ if _STM32_TOOLS not in sys.path:
     sys.path.insert(0, _STM32_TOOLS)
 
 from ros_monitor import (  # noqa: E402  (import apres modif sys.path)
-    build_frame, FrameParser,
+    build_frame, FrameParser, u32,
     decode_speed, decode_imu_att, decode_encoder,
     decode_pid, decode_wheel_geom, CAR_TYPE_CPR,
     FUNC_REQUEST_DATA, FUNC_CAR_TYPE, FUNC_SET_WHEEL_GEOM,
@@ -74,6 +74,15 @@ class RobotComSerial:
         self.encoders = None           # [M1..M4]
         self.ok = 0
         self.bad = 0
+
+        # Timestamps horloge interne carte (ms, u32 LE) prefixes des trames de metriques
+        # (convention carte GrovePi) + heure de reception hote (pour le calcul d'age).
+        self.ts_speed = None           # ms carte (trame 0x0A vitesse+batterie)
+        self.ts_imu = None             # ms carte (trame 0x0C attitude)
+        self.ts_enc = None             # ms carte (trame 0x0D encodeurs)
+        self.speed_t = 0.0             # time.time() de la derniere trame vitesse
+        self.imu_t = 0.0               # time.time() de la derniere trame attitude
+        self.enc_t = 0.0               # time.time() de la derniere trame encodeurs
 
         # Rapports requete/reponse (REQUEST_DATA 0x50 -> report) + horodatage :
         # une lecture ecrit la requete puis attend un horodatage plus recent.
@@ -186,26 +195,32 @@ class RobotComSerial:
 
     def _apply(self, func, data):
         """Met a jour l'etat a partir d'une trame decodee (sous verrou)."""
-        if func == REPORT_SPEED and len(data) >= 7:
+        if func == REPORT_SPEED and len(data) >= 11:
             d = decode_speed(data)
             self.vx = d["Vx (mm/s)"]
             self.vy = d["Vy (mm/s)"]
             self.vz = d["Vz (rad/s)"]
             self.battery = d["Batterie (V)"]
+            self.ts_speed = u32(data, 0)              # timestamp carte (ms)
+            self.speed_t = time.time()
             if self.tel:
                 self.tel.log_rx("speed", vx=self.vx, vy=self.vy, vz=self.vz,
                                 batt=self.battery)
-        elif func == REPORT_IMU_ATT and len(data) >= 6:
+        elif func == REPORT_IMU_ATT and len(data) >= 10:
             d = decode_imu_att(data)
             self.roll = d["Roll (deg)"]
             self.pitch = d["Pitch (deg)"]
             self.yaw = d["Yaw (deg)"]
+            self.ts_imu = u32(data, 0)                # timestamp carte (ms)
+            self.imu_t = time.time()
             if self.tel:
                 self.tel.log_rx("imu", roll=self.roll, pitch=self.pitch,
                                 yaw=self.yaw)
-        elif func == REPORT_ENCODER and len(data) >= 16:
+        elif func == REPORT_ENCODER and len(data) >= 20:
             d = decode_encoder(data)
             self.encoders = [d[f"M{i + 1}"] for i in range(4)]
+            self.ts_enc = u32(data, 0)                # timestamp carte (ms)
+            self.enc_t = time.time()
             self.enc_hist.append((time.time(), list(self.encoders)))
             if self.tel:
                 self.tel.log_rx("encoder", m=list(self.encoders))
@@ -234,13 +249,21 @@ class RobotComSerial:
         return self.ser is not None
 
     def snapshot(self):
-        """Copie coherente des dernieres metriques (sous verrou)."""
+        """Copie coherente des dernieres metriques (sous verrou).
+        ts_* = horloge interne carte (ms, u32) prefixee des trames ; *_age = fraicheur
+        cote hote (secondes depuis la derniere reception), None si jamais recu -- meme
+        convention que GroveComSerial.snapshot."""
+        now = time.time()
         with self.lock:
             return {
                 "battery": self.battery, "yaw": self.yaw,
                 "roll": self.roll, "pitch": self.pitch,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
+                "ts_speed": self.ts_speed, "ts_imu": self.ts_imu, "ts_enc": self.ts_enc,
+                "speed_age": (now - self.speed_t) if self.speed_t else None,
+                "imu_age": (now - self.imu_t) if self.imu_t else None,
+                "enc_age": (now - self.enc_t) if self.enc_t else None,
                 "ok": self.ok, "bad": self.bad,
             }
 

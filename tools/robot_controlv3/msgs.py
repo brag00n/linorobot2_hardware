@@ -159,6 +159,15 @@ class BoardTelemetry:
     # Vitesse de rotation par moteur en tours/MINUTE (= tics/s / cpr * 60), None si
     # historique insuffisant. Remplace l'ancien comptage cumulatif `encoders`.
     rpm: Optional[list] = None
+    # Timestamps horloge interne carte (ms, u32) prefixes des trames de metriques
+    # (convention carte GrovePi) ; *_age = fraicheur cote hote (s depuis la derniere
+    # trame de la famille, None si jamais recue) -- cf GrovePiTelemetry.
+    ts_speed: Optional[int] = None
+    ts_imu: Optional[int] = None
+    ts_enc: Optional[int] = None
+    speed_age: Optional[float] = None
+    imu_age: Optional[float] = None
+    enc_age: Optional[float] = None
     ok: int = 0
     bad: int = 0
 

@@ -110,6 +110,18 @@ def s32(b0, b1, b2, b3):
     return v - 0x100000000 if v & 0x80000000 else v
 
 
+def u32(d, off=0):
+    """Reconstruit un entier NON signe 32 bits little-endian a partir de d[off..off+3].
+    Sert a lire le timestamp horloge interne (ms) prefixe des trames de metriques."""
+    return d[off] | (d[off + 1] << 8) | (d[off + 2] << 16) | (d[off + 3] << 24)
+
+
+# Les trames de metriques (0x0A/0x0C/0x0D/0x0E) prefixent leur payload d'un timestamp
+# horloge interne carte : u32 little-endian, ms (tick FreeRTOS), en TETE de payload
+# (convention identique a la carte GrovePi). Les donnees capteur suivent a l'offset 4.
+TS_LEN = 4
+
+
 def build_frame(func, params=b""):
     """Construit une trame hote -> carte : [0xFF][0xFC][LEN][FUNC][params][CHK].
     LEN = taille_totale - 2 ; CHK = somme(octets[2..fin-1]) & 0xFF."""
@@ -124,35 +136,39 @@ def build_frame(func, params=b""):
 # de moyenner metrique par metrique sur l'intervalle d'agregation.
 # ---------------------------------------------------------------------------
 def decode_speed(d):
+    o = TS_LEN                                        # donnees apres le timestamp (u32)
     return {
-        "Vx (mm/s)":    float(s16(d[0], d[1])),
-        "Vy (mm/s)":    float(s16(d[2], d[3])),
-        "Vz (rad/s)":   s16(d[4], d[5]) / 1000.0,
-        "Batterie (V)": d[6] / 10.0,
+        "Vx (mm/s)":    float(s16(d[o + 0], d[o + 1])),
+        "Vy (mm/s)":    float(s16(d[o + 2], d[o + 3])),
+        "Vz (rad/s)":   s16(d[o + 4], d[o + 5]) / 1000.0,
+        "Batterie (V)": d[o + 6] / 10.0,
     }
 
 
 def decode_icm_raw(d):
+    o = TS_LEN                                        # donnees apres le timestamp (u32)
     axes = ("x", "y", "z")
     out = {}
     for i, a in enumerate(axes):                     # gyro
-        out[f"gyro_{a}"] = s16(d[2 * i], d[2 * i + 1]) / 1000.0
+        out[f"gyro_{a}"] = s16(d[o + 2 * i], d[o + 2 * i + 1]) / 1000.0
     for i, a in enumerate(axes):                     # accel
-        out[f"accel_{a}"] = s16(d[6 + 2 * i], d[6 + 2 * i + 1]) / 1000.0
+        out[f"accel_{a}"] = s16(d[o + 6 + 2 * i], d[o + 6 + 2 * i + 1]) / 1000.0
     for i, a in enumerate(axes):                     # mag
-        out[f"mag_{a}"] = s16(d[12 + 2 * i], d[12 + 2 * i + 1]) / 1000.0
+        out[f"mag_{a}"] = s16(d[o + 12 + 2 * i], d[o + 12 + 2 * i + 1]) / 1000.0
     return out
 
 
 def decode_imu_att(d):
-    rad = [s16(d[2 * i], d[2 * i + 1]) / 10000.0 for i in range(3)]
+    o = TS_LEN                                        # donnees apres le timestamp (u32)
+    rad = [s16(d[o + 2 * i], d[o + 2 * i + 1]) / 10000.0 for i in range(3)]
     deg = [r * 180.0 / math.pi for r in rad]
     return {"Roll (deg)": deg[0], "Pitch (deg)": deg[1], "Yaw (deg)": deg[2]}
 
 
 def decode_encoder(d):
-    return {f"M{i + 1}": float(s32(d[4 * i], d[4 * i + 1],
-                                   d[4 * i + 2], d[4 * i + 3])) for i in range(4)}
+    o = TS_LEN                                        # donnees apres le timestamp (u32)
+    return {f"M{i + 1}": float(s32(d[o + 4 * i], d[o + 4 * i + 1],
+                                   d[o + 4 * i + 2], d[o + 4 * i + 3])) for i in range(4)}
 
 
 def decode_wheel_geom(d):
@@ -215,11 +231,11 @@ def encoder_speed_lines(stats, cpr, prefix="    "):
 
 
 # func -> (titre, decode_fn, format_fn, taille_min_donnees)
-DECODERS = {
-    0x0A: ("Vitesse & batterie",   decode_speed,   fmt_kv,      7),
-    0x0C: ("Attitude (RPY)",       decode_imu_att, fmt_kv,      6),
-    0x0E: ("IMU brut (ICM20948)",  decode_icm_raw, fmt_icm,    18),
-    0x0D: ("Encodeurs",            decode_encoder, fmt_encoder, 16),
+DECODERS = {  # taille_min = TS_LEN(4) + donnees capteur (7/6/18/16)
+    0x0A: ("Vitesse & batterie",   decode_speed,   fmt_kv,      11),
+    0x0C: ("Attitude (RPY)",       decode_imu_att, fmt_kv,      10),
+    0x0E: ("IMU brut (ICM20948)",  decode_icm_raw, fmt_icm,    22),
+    0x0D: ("Encodeurs",            decode_encoder, fmt_encoder, 20),
 }
 DISPLAY_ORDER = (0x0A, 0x0C, 0x0E, 0x0D)
 
