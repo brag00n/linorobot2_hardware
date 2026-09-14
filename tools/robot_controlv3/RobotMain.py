@@ -493,6 +493,41 @@ def _shift_down():
         return False
 
 
+# Codes touches virtuelles Windows des fleches (VK_LEFT/UP/RIGHT/DOWN).
+_VK_ARROWS = (0x26, 0x28, 0x25, 0x27)     # (haut, bas, gauche, droite)
+
+
+def _arrows_down():
+    """Etat PHYSIQUE des 4 fleches a l'instant -> (haut, bas, gauche, droite).
+    cv2.waitKeyEx ne fournit que du keydown (auto-repete OS), jamais de keyup : pour
+    un pilotage « tenue » (presser=bouger / relacher=stop) on sonde l'etat reel des
+    touches via GetAsyncKeyState (bit 0x8000). Windows uniquement ; ailleurs -> tout
+    False (le teleop a fenetre ne tourne que sur le bureau Windows ; --headless/Linux
+    n'a pas de clavier)."""
+    try:
+        import ctypes
+        g = ctypes.windll.user32.GetAsyncKeyState
+        return tuple(bool(g(vk) & 0x8000) for vk in _VK_ARROWS)
+    except Exception:
+        return (False, False, False, False)
+
+
+def _window_focused(title):
+    """True si la fenetre nommee `title` est au premier plan (garde-fou : ne pas
+    piloter les moteurs quand une AUTRE application a le focus alors qu'une fleche
+    est physiquement enfoncee). Si le HWND est introuvable (fenetre pas encore creee,
+    hors Windows) -> True (repli permissif, coherent avec la detection Shift)."""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        hwnd = u.FindWindowW(None, title)
+        if not hwnd:
+            return True
+        return u.GetForegroundWindow() == hwnd
+    except Exception:
+        return True
+
+
 def _help_btn_for_key(key):
     """Index du bouton d'aide correspondant a la touche `key` (code cv2), ou None.
     Meme correspondance que _process_key (fleches nues = moteurs, Shift+fleches et
@@ -639,6 +674,7 @@ class RobotControlCore:
         self.last_seq = -1           # derniere detection loguee (event detect)
         self.last_locked = None      # dernier etat de verrou (transition lock/unlock)
         self._cmdvel_t0 = 0.0        # horodatage du dernier republication cmd_vel (~10 Hz)
+        self._hold_prev = (0, 0)     # dernier (fwd, turn) sonde -> republication immediate au changement
         self._servo_seq = 0          # sequence des ServoCmd clavier (messages discrets)
         self._recog_seq = 0          # sequence des commandes reco ponctuelles (train/fichier)
 
@@ -834,6 +870,28 @@ class RobotControlCore:
     # -----------------------------------------------------------------------
     # Clavier (identique a robot_control ; nudges/center via /servo/cmd)
     # -----------------------------------------------------------------------
+    def _drive_from_arrows(self):
+        """Pilotage moteurs par TENUE des fleches (modele presser=bouger/relacher=stop).
+        Sonde l'etat physique des 4 fleches et fixe l'etat cmd_vel a la vitesse programmee :
+        fwd = haut - bas, turn = gauche - droite (les opposees s'annulent, combinaison = arc).
+        Republie IMMEDIATEMENT sur changement de (fwd, turn) -> demarrage / arret francs ;
+        entre deux, le cycle ~10 Hz de la boucle entretient la trame.
+
+        Neutralise (etat 0) si moteurs desarmes, Shift enfonce (reserve au pan/tilt camera),
+        ou fenetre pas au premier plan (garde-fou anti-mouvement fantome)."""
+        if (not self.motion_on) or _shift_down() or (not _window_focused(self.win)):
+            fwd, turn = 0, 0
+        else:
+            up, down, left, right = _arrows_down()
+            fwd = int(up) - int(down)
+            turn = int(left) - int(right)         # gauche=+ (anti-horaire), droite=-
+        if (fwd, turn) != self._hold_prev:
+            self.motion.holdVelocity(fwd, turn)
+            if self.motion_on:
+                self.motion.publish()             # transition franche (start/stop immediat)
+                self._cmdvel_t0 = time.time()
+            self._hold_prev = (fwd, turn)
+
     def _process_key(self, key, now):
         """Traite une touche. Retourne (quit, moved_now)."""
         k = key & 0xFF
@@ -856,19 +914,11 @@ class RobotControlCore:
                 self._publish_servo("nudge_tilt", +SERVO_STEP)
             else:
                 self._publish_servo("nudge_tilt", -SERVO_STEP)
-        elif arrow:                              # fleche nue : ajuste l'etat cmd_vel
-            if self.motion_on:
-                # Etat combine type ROS : les fleches incrementent linear.x / angular.z ;
-                # le republieur (~10 Hz) entretient le mouvement. Avant + tourner -> arc.
-                if key in KEYS_UP:
-                    self.motion.nudgeLinear(+1)
-                elif key in KEYS_DOWN:
-                    self.motion.nudgeLinear(-1)
-                elif key in KEYS_LEFT:
-                    self.motion.nudgeAngular(+1)   # anti-horaire (gauche)
-                else:
-                    self.motion.nudgeAngular(-1)   # horaire (droite)
-                self.motion.publish()              # emet tout de suite (reactivite)
+        elif arrow:                              # fleche nue : pilotage moteurs
+            # Modele « tenue » : le mouvement est pilote par le sondage de l'etat
+            # PHYSIQUE des fleches dans la boucle principale (_drive_from_arrows),
+            # pas par cet evenement keydown (qui ne dit rien du relachement). On ne
+            # fait rien ici ; on signale juste « moved » pour l'eclairage du bouton.
             return False, True
         elif key in KEYS_PGUP:                    # Page-Up : vitesse +1 (0..9)
             self.motion.setSpeed(self.motion.speedLevel + 1)
@@ -1106,7 +1156,11 @@ class RobotControlCore:
             elif not cam_ok:
                 time.sleep(0.02)                 # sans camera : cap ~50 fps (evite 100% CPU)
 
-            # 10) republieur cmd_vel ~10 Hz : entretient l'etat de mouvement (modele ROS)
+            # 10) tenue des fleches : sonde l'etat physique -> etat cmd_vel (presser=bouger,
+            #     relacher=stop) ; republication immediate au changement (start/stop francs).
+            self._drive_from_arrows()
+
+            # 11) republieur cmd_vel ~10 Hz : entretient l'etat de mouvement (modele ROS)
             #     et nourrit le watchdog cmd_vel firmware. A l'arret (etat 0) on emet
             #     quand meme cmd_vel(0,0) tant que les moteurs sont armes (Motion_Stop).
             if self.motion_on and (now - self._cmdvel_t0) >= CMDVEL_PERIOD_S:

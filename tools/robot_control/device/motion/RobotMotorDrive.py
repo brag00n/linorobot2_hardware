@@ -7,8 +7,12 @@ RobotComSerial.sendCmdVel (FUNC_MOTION 0x12). La carte STM32 fait la kinematics
 differentielle embarquee + le PID par roue : on ne calcule donc AUCUN melange de
 signes ni de mapping roue cote hote (tout est gere par Fourwheel_Ctrl firmware).
 
-Les fleches AJUSTENT cet etat (nudgeLinear/nudgeAngular), Espace/coupure le remet
-a zero (reset/stop). On peut avancer ET tourner en meme temps -> arcs.
+Modele d'entree « tenue » : les fleches ne s'accumulent plus. L'application sonde
+l'etat PHYSIQUE des fleches a chaque tour de boucle et appelle holdVelocity(fwd, turn)
+-> l'etat cmd_vel vaut la vitesse PROGRAMMEE (niveau 0..9) tant qu'une fleche est
+maintenue, et retombe a zero des le relachement. On peut avancer ET tourner en meme
+temps (fwd et turn simultanes -> arc) ; les opposes s'annulent (fwd = haut - bas,
+turn = gauche - droite).
 
 Prerequis carte : type chassis CAR_FOURWHEEL (set_car_type 4) pour router sur la
 kinematics 4 roues, et geometrie roue reglee (set_wheel_geom). M2 (encodeur HS)
@@ -19,6 +23,11 @@ firmware (sentinelle PID).
 # Plafonds de securite (doivent rester <= aux bornes de sendCmdVel : 1 m/s, 2 rad/s).
 MAX_LIN = 1.0      # m/s   (plafond firmware ~1000 mm/s)
 MAX_ANG = 2.0      # rad/s (borne sendCmdVel a +-2000 mrad/s)
+
+# Plafonds teleop (vitesse a niveau 9) : <= MAX_LIN / MAX_ANG. Le niveau 0..9 echelonne
+# une FRACTION de ces plafonds : niveau 0 = 10 % (mini non nul), niveau 9 = 100 %.
+TELE_LIN = 0.5     # m/s a niveau 9
+TELE_ANG = 1.5     # rad/s a niveau 9
 
 
 class RobotMotorDrive:
@@ -36,22 +45,20 @@ class RobotMotorDrive:
         self.speedLevel = max(0, min(9, int(level)))
         return self
 
-    # --- pas d'increment (croit avec le niveau de vitesse) ------------------
-    def _stepLin(self):
-        return MAX_LIN * (self.speedLevel + 1) / 20.0     # 0.05 .. 0.5 m/s par appui
+    # --- vitesse programmee (fraction du plafond, croit avec le niveau) -----
+    def _frac(self):
+        return (self.speedLevel + 1) / 10.0               # 0.1 .. 1.0
 
-    def _stepAng(self):
-        return MAX_ANG * (self.speedLevel + 1) / 20.0     # 0.1 .. 1.0 rad/s par appui
-
-    # --- ajustement de l'etat cmd_vel ---------------------------------------
-    def nudgeLinear(self, sign):
-        """Incremente linear.x (+1 avant / -1 arriere), borne a +-MAX_LIN."""
-        self.lin = max(-MAX_LIN, min(MAX_LIN, self.lin + sign * self._stepLin()))
-        return self
-
-    def nudgeAngular(self, sign):
-        """Incremente angular.z (+1 anti-horaire / -1 horaire), borne a +-MAX_ANG."""
-        self.ang = max(-MAX_ANG, min(MAX_ANG, self.ang + sign * self._stepAng()))
+    # --- pilotage par TENUE (presser = bouger / relacher = stop) ------------
+    def holdVelocity(self, fwd_sign, turn_sign):
+        """Fixe l'etat cmd_vel a la vitesse PROGRAMMEE selon les fleches maintenues.
+        fwd_sign : +1 (haut/avant), -1 (bas/arriere), 0 (aucune / opposees annulees).
+        turn_sign: +1 (gauche/anti-horaire), -1 (droite/horaire), 0 (aucune / annulees).
+        Rotation a plat = fwd_sign 0 + turn_sign != 0 ; arc = les deux non nuls.
+        Un relachement (signes 0) remet l'etat a zero -> le republieur emet cmd_vel(0,0)."""
+        frac = self._frac()
+        self.lin = max(-1, min(1, fwd_sign)) * TELE_LIN * frac
+        self.ang = max(-1, min(1, turn_sign)) * TELE_ANG * frac
         return self
 
     def reset(self):
