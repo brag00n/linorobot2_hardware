@@ -29,8 +29,9 @@ import time
 
 class Telemetry:
     def __init__(self, log_dir=None, enabled=True, snapshot_period=0.5,
-                 rx_min_period=0.2, max_bytes=5_000_000):
+                 rx_min_period=0.2, max_bytes=5_000_000, version=None):
         self.enabled = enabled
+        self.version = version           # version applicative (ecrite dans state.json)
         if log_dir is None:
             # logs/ a la racine du paquet robot_control (deux niveaux au-dessus de lib/)
             here = os.path.dirname(os.path.abspath(__file__))
@@ -81,6 +82,7 @@ class Telemetry:
         snap = {"updated": round(t, 3),
                 "uptime": round(t - self.start_t, 1),
                 "pid": os.getpid(),
+                "version": self.version,
                 "counts": dict(self._counts),
                 "last": self._state}
         try:

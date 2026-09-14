@@ -47,6 +47,7 @@ from robot_control.RobotMain import (
     TARGET_STEP, clamp_target,
 )
 from robot_control.lib.Telemetry import Telemetry
+from robot_control.version import APP_VERSION
 from robot_control.communication.RobotComSerial import RobotComSerial
 from robot_control.device.motion.RobotMotorDrive import RobotMotorDrive
 from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
@@ -287,8 +288,10 @@ def _draw_grove_card(frame, x, y, port_name, gp):
     _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
 
 
-def _draw_recog_badge(frame, recog):
-    """Badge reconnaissance (haut-centre) : mode + nom/id_pred + score + stabilite.
+def _draw_recog_badge(frame, recog, x=8, y=176, w=320):
+    """Bandeau reconnaissance SOUS la carte CAM : ligne d'etat (mode + nom/id_pred +
+    score + stabilite) puis VIGNETTE du visage capture (crop 112x112 redresse par
+    alignCrop = exactement la vue fournie au recogniseur).
 
     known -> vert si stable, orange si episode instable (stab < 60%) ; unknown ->
     orange ; idle/off -> gris. `score` = cosinus lisse (EMA), `stability` = taux de
@@ -306,17 +309,24 @@ def _draw_recog_badge(frame, recog):
     else:
         txt = "reco %s : en attente" % recog.mode
         col = (170, 170, 170)
-    full = "%s   [%s]" % (txt, recog.mode)
-    (tw, th), _ = cv2.getTextSize(full, _FONT, 0.5, 1)
-    fw = frame.shape[1]
-    x = max(6, (fw - tw) // 2)
-    y = 22
-    roi = frame[y - th - 6:y + 4, x - 6:x + tw + 6]
-    if roi.size:
-        fill = np.empty_like(roi)
-        fill[:] = (35, 35, 35)
-        roi[:] = cv2.addWeighted(roi, 0.35, fill, 0.65, 0.0)
-    _put(frame, x, y, full, col, 0.5, 1)
+    thumb = getattr(recog, "thumb", None)
+    has_thumb = thumb is not None and getattr(thumb, "size", 0)
+    ts = 112                                          # cote de la vignette affichee
+    h = 22 + (ts + 10 if has_thumb else 0)
+    _card_bg(frame, x, y, w, h, alpha=0.55)
+    _put(frame, x + 8, y + 15, "%s   [%s]" % (txt, recog.mode), col, 0.45, 1)
+    if not has_thumb:
+        return
+    try:
+        vig = cv2.resize(thumb, (ts, ts), interpolation=cv2.INTER_NEAREST)
+        vx, vy = x + 8, y + 24
+        frame[vy:vy + ts, vx:vx + ts] = vig
+        cv2.rectangle(frame, (vx - 1, vy - 1), (vx + ts, vy + ts), col, 1)
+        _put(frame, vx + ts + 12, vy + 16, "visage capture", _C_LABEL, 0.42, 1)
+        _put(frame, vx + ts + 12, vy + 36, "vue recogniseur", _C_TITLE_OFF, 0.36, 1)
+        _put(frame, vx + ts + 12, vy + 52, "112x112 redresse", _C_TITLE_OFF, 0.36, 1)
+    except Exception:
+        pass
 
 
 def _draw_train_log(frame, tr):
@@ -539,8 +549,10 @@ class RobotControlCore:
         args = self.args
         # 1) telemetrie (journal structure ; budget = fichier vif + 1 backup)
         self.tel = Telemetry(log_dir=args.log_dir, enabled=not args.no_telemetry,
-                             max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2))
-        self.tel.log("event", msg="start", app="v3", motion=self.motion_on, port=args.port,
+                             max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2),
+                             version=APP_VERSION)
+        self.tel.log("event", msg="start", app="v3", version=APP_VERSION,
+                     motion=self.motion_on, port=args.port,
                      index=str(args.index), backend=args.backend, size=args.size,
                      pan_gain=args.pan_gain, tilt_gain=args.tilt_gain,
                      deadzone=args.deadzone, dead_hyst=args.dead_hyst, max_step=args.max_step,
@@ -915,6 +927,8 @@ class RobotControlCore:
                             not self.args.no_smooth, self.active, met, len(faces),
                             self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent)
             _draw_recog_badge(frame, recog)     # nom/id_pred + score + mode reco
+            # version applicative (coin bas-gauche) : repere de code charge
+            _put(frame, 8, frame.shape[0] - 8, "v" + APP_VERSION, _C_TITLE_OFF, 0.4)
             # panneau log d'apprentissage : pendant le batch, puis ~20 s apres
             if tr is not None and (train_running
                                    or (self._train_done_t and now - self._train_done_t < 20.0)):

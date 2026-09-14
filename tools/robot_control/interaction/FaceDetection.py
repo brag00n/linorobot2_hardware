@@ -27,6 +27,16 @@ import time
 
 import cv2
 
+# OpenCV 5 (nouveau moteur de graphe DNN) emet a chaque image un WARN inutile
+# « Targets are not supported by the new graph engine for now » (setPreferableTarget
+# appele en interne par FaceDetectorYN/FaceRecognizerSF/res10). On remonte le niveau
+# de log DNN a ERROR une fois pour toutes -> plus de spam console. Best-effort : l'API
+# logging n'existe pas sur toutes les versions d'OpenCV.
+try:
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+except Exception:
+    pass
+
 from ..device.sensor.RobotSensorWebCam import findCascade
 
 # Modeles vision (DNN/YuNet/VitTrack) livres avec l'ancien toolkit Bambou4WD_python

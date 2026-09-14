@@ -62,7 +62,10 @@ class FaceRecogNode(Node):
         # (alignCrop redresse la tete penchee). Les landmarks du tracker sont souvent
         # absents (box interpolee VIT) ou en coords reduites -> inexploitables ici.
         self._yunet_model = getattr(args, "yunet_model", None) or DEFAULT_YUNET_MODEL
-        self._det_conf = float(getattr(args, "det_conf", 0.6))
+        # seuil de confiance DEDIE (plus bas que le detecteur de suivi) : YuNet
+        # decroche sur les visages penches ; un seuil permissif (0.5) rattrape ces
+        # detections -> plus de frames redressees (alignCrop) tete inclinee.
+        self._det_conf = float(getattr(args, "recog_det_conf", 0.5))
         self._yn = None
         self._yn_wh = None
         # stabilisation temporelle par episode (anti-flicker) : lissage EMA du
@@ -103,6 +106,7 @@ class FaceRecogNode(Node):
         self._ep_prev = None          # statut du tick precedent
         self._ep_sum = 0.0            # somme des cosinus bruts (moyenne)
         self._ep_sq = 0.0             # somme des carres (ecart-type)
+        self._ep_thumb = None         # 1re vignette de l'episode (figee jusqu'au suivant)
         self._last_result = RecognitionResult(seq=0, status="idle", mode=self.mode)
         self._acq_last_t = 0.0
         self._acq_count = {}              # id_lot -> nb d'images ecrites
@@ -159,6 +163,15 @@ class FaceRecogNode(Node):
             self._out.set(pend)
 
         if not self.rec.loaded or self.mode == "off":
+            # reco arretee : publier UNE fois un resultat "idle" pour que le bus
+            # (donc le HUD : badge + bouton R) reflete l'arret. Sinon l'ancien
+            # resultat reste latche et l'affichage semble « ne pas se desactiver ».
+            if self._last_result is None or self._last_result.status != "idle":
+                self._flushEpisode()                    # clot proprement l'episode
+                self._ep_lock, self._ep_n = None, 0
+                idle = RecognitionResult(seq=0, status="idle", mode=self.mode)
+                self._last_result = idle
+                self._out.set(idle)
             return
 
         res = self._trk_in.get()
@@ -182,9 +195,11 @@ class FaceRecogNode(Node):
         # landmarks pleine res -> alignCrop (redresse les visages penches). Repli sur
         # les landmarks du tracker puis recadrage brut si YuNet ne trouve rien.
         box, landmarks = self._detectLandmarks(img.frame, res.main)
+        aligned = box is not None                        # YuNet frais -> alignCrop applique
         if box is None:
             box, landmarks = res.main, tstate.get("landmarks")
-        emb = self.rec.embed(img.frame, box, landmarks)
+        crop = self.rec.align(img.frame, box, landmarks)   # 112x112 redresse (= vue recogniseur)
+        emb = self.rec.feature(crop)
         # candidat le PLUS proche, SANS seuil : l'hysteresis/lissage decide en aval.
         id_cand, name_cand, cos = self.rec.nearest(emb)
 
@@ -197,6 +212,7 @@ class FaceRecogNode(Node):
             self._ep_n = self._ep_known = self._ep_flips = 0
             self._ep_prev = None
             self._ep_sum = self._ep_sq = 0.0
+            self._ep_thumb = crop        # vignette figee sur le 1er visage de l'episode
         else:
             self._ep_ema = self._ema_a * cos + (1.0 - self._ema_a) * self._ep_ema
 
@@ -228,7 +244,7 @@ class FaceRecogNode(Node):
             seq=res.seq, status=status, id_pred=self._ep_id, name=self._ep_name,
             score=round(float(ema), 3), raw_score=round(float(cos), 3),
             stability=round(float(stability), 3),
-            id_lot=id_lot, lock_id=lock_id, mode=self.mode)
+            id_lot=id_lot, lock_id=lock_id, mode=self.mode, thumb=self._ep_thumb)
 
         if self.mode == "acquisition":
             saved = self._acquire(img.frame, box, landmarks, tstate,
@@ -243,7 +259,7 @@ class FaceRecogNode(Node):
         # telemetrie live : echantillon + emission periodique moyennee
         now = time.time()
         self._live_buf.append((now, float(cos), status == "known",
-                               self._ep_id, self._ep_name))
+                               self._ep_id, self._ep_name, aligned))
         if now - self._live_t >= self._live_period:
             self._live_t = now
             self._emitLive(now)
@@ -262,12 +278,14 @@ class FaceRecogNode(Node):
         mean = sum(coss) / n
         var = max(0.0, sum(c * c for c in coss) / n - mean * mean)
         known = sum(1 for s in xs if s[2])
+        aligned = sum(1 for s in xs if len(s) > 5 and s[5])   # frames alignCrop (YuNet frais)
         flips = sum(1 for a, b in zip(xs, xs[1:]) if a[2] != b[2])
         # identite committee dominante sur la fenetre (parmi les frames « known »)
         ids = [(s[3], s[4]) for s in xs if s[2] and s[3] is not None]
         maj_id, maj_name = (collections.Counter(ids).most_common(1)[0][0]
                             if ids else (None, "unknown"))
         self._log("recog_live", n=n, recog_rate=round(known / n, 3),
+                  aligned_rate=round(aligned / n, 3),
                   cos_mean=round(mean, 3), cos_std=round(var ** 0.5, 3),
                   flips=flips, id_pred=maj_id, name=maj_name,
                   ema=round(float(self._ep_ema), 3),

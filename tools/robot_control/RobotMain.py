@@ -52,6 +52,7 @@ import time
 import cv2
 
 from .lib.Telemetry import Telemetry
+from .version import APP_VERSION
 from .communication.RobotComSerial import RobotComSerial
 from .device.motion.RobotMotorDrive import RobotMotorDrive
 from .device.motion.RobotServoMotor import RobotServoMotor
@@ -501,8 +502,10 @@ class RobotControlApp:
 
         # 1) telemetrie (journal structure ; budget disque = fichier vif + 1 backup)
         self.tel = Telemetry(log_dir=args.log_dir, enabled=not args.no_telemetry,
-                             max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2))
-        self.tel.log("event", msg="start", motion=self.motion_on, port=args.port,
+                             max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2),
+                             version=APP_VERSION)
+        self.tel.log("event", msg="start", version=APP_VERSION,
+                     motion=self.motion_on, port=args.port,
                      index=str(args.index), backend=args.backend, size=f"{self.w}x{self.h}",
                      pan_gain=args.pan_gain, tilt_gain=args.tilt_gain,
                      deadzone=args.deadzone, dead_hyst=args.dead_hyst, max_step=args.max_step,

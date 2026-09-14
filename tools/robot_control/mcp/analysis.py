@@ -47,8 +47,10 @@ def t_status(args):
 def _status_text(state, last):
     alive = LOGS.running(state)
     lines = [
-        "app       : %s (pid %s)" % ("EN COURS" if alive else "arretee/silencieuse",
-                                     state.get("pid")),
+        "app       : %s (pid %s%s)" % ("EN COURS" if alive else "arretee/silencieuse",
+                                       state.get("pid"),
+                                       "" if not state.get("version")
+                                       else "  v" + str(state.get("version"))),
         "uptime    : %ss   (state maj il y a %ss)"
         % (state.get("uptime"), round(time.time() - state.get("updated", 0), 1)),
         "compteurs : %s" % json.dumps(state.get("counts", {}), separators=(",", ":")),

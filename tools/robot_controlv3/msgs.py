@@ -85,6 +85,7 @@ class RecognitionResult:
     id_lot: Optional[str] = None
     lock_id: int = 0
     mode: str = "off"
+    thumb: Optional[Any] = None      # crop 112x112 BGR redresse (alignCrop) pour le HUD
 
 
 @dataclass
