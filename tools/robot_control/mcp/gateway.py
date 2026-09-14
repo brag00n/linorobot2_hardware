@@ -622,6 +622,17 @@ def _cmd_metrics(args, link, motion, cpr):
         lines.append("Vitesse moteurs : "
                      + "  ".join("M%d=%+.0ft/s(%+.1ftr/min)"
                                  % (i + 1, sp[i], sp[i] * 60.0 / c) for i in range(4)))
+    # Timestamp horloge interne carte (ms, u32 LE prefixe des trames, convention GrovePi)
+    # + fraicheur cote hote (age en s depuis la derniere trame de la famille).
+    if s.get("ts_speed") is not None or s.get("ts_imu") is not None or s.get("ts_enc") is not None:
+        def _fmt(ts, age):
+            if ts is None:
+                return "--"
+            return "%d ms (age %.2fs)" % (ts, age) if age is not None else "%d ms" % ts
+        lines.append("Horodatage carte : speed=%s  imu=%s  enc=%s"
+                     % (_fmt(s.get("ts_speed"), s.get("speed_age")),
+                        _fmt(s.get("ts_imu"), s.get("imu_age")),
+                        _fmt(s.get("ts_enc"), s.get("enc_age"))))
     if not lines:
         return "Aucune metrique recue pour l'instant (carte connectee ?)."
     return "\n".join(lines)
