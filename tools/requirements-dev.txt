@@ -1,0 +1,17 @@
+# Dependances de DEVELOPPEMENT (poste de dev uniquement, PAS le runtime robot/RPi).
+# pymavlink fournit mavgen, qui REGENERE le dialecte protocol/mavlink/bamboo.xml en :
+#   - code C header-only  -> protocol/mavlink/generated/c/**   (inclus par les 3 firmwares)
+#   - module Python        -> tools/robot_control/communication/mav/bamboo.py
+# Ce module genere est autonome (stdlib seule a l'execution) : l'app de pilotage n'a donc
+# JAMAIS besoin de pymavlink ni de ses deps lourdes (lxml, C-extension penible a compiler
+# sur ARM).
+#
+# platformio fournit la CLI `pio` pour compiler/flasher les 3 firmwares en ligne de commande
+# (builds reproductibles / CI, independamment de l'extension VSCode PlatformIO).
+#
+# Ces deux outils vivent dans un venv SEPARE (tools/.venv-dev) : le resolveur de PlatformIO
+# gere sa propre version de pyserial et tire ~25 paquets transitifs -> on ne veut pas qu'il
+# perturbe le pin runtime de tools/.venv ni qu'il alourdisse le deploiement robot/RPi.
+# Provisionne par : install.ps1 -Dev  /  install.sh --dev
+pymavlink==2.4.49
+platformio==6.2.0

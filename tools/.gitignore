@@ -1,5 +1,7 @@
-# environnement Python local (recree par install.ps1 / install.sh)
+# environnements Python locaux (recrees par install.ps1 / install.sh)
+# .venv = runtime (app) ; .venv-dev = toolchain dev (mavgen/regen + PlatformIO)
 .venv/
+.venv-dev/
 
 # caches Python
 __pycache__/

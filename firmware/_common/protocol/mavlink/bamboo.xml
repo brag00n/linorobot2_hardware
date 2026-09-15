@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<!--
+  Dialecte MAVLink v2 du robot Bamboo4WD_V4 (source UNIQUE : genere le code C des 3
+  cartes de controle ET le module Python de l'hote via mavgen, cf. regen.ps1/regen.sh).
+
+  Principe : REUTILISER AU MAXIMUM le standard (include common.xml) pour rester
+  reconnaissable par un GCS (QGroundControl) et mappable sans code par un futur pont
+  ROS2. Le protocole binaire maison ([0xFF][ID][LEN][FUNC][payload][CHK]) est retire.
+
+  Ce qui vient de common.xml (AUCUNE definition ici) :
+    - HEARTBEAT (#0)        : presence + MAV_TYPE_GROUND_ROVER + etat (1 Hz)
+    - SYS_STATUS (#1)       : voltage_battery (mV)  <- ex 0x0A (batterie)
+    - ATTITUDE (#30)        : roll/pitch/yaw (rad) + rates gyro  <- ex 0x0C IMU_ATT
+    - PARAM_REQUEST_READ/LIST, PARAM_SET, PARAM_VALUE : PID moteur/yaw, geometrie
+                              roue, type de chassis  <- ex 0x13/0x14/0x15/0x16
+    - COMMAND_LONG (#76) / COMMAND_ACK (#77) : actions ponctuelles ->
+        MAV_CMD_PREFLIGHT_CALIBRATION (241) param1=1  : recalibrer le biais gyro (ex-0x17)
+        MAV_CMD_PREFLIGHT_STORAGE (245)               : commit/reset flash (ex verify 0x5F / 0xA0)
+        MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN (246)       : entrer bootloader (ex 0xA3)
+        MAV_CMD_DO_SET_SERVO (183)                    : servo PWM (ex 0x03/0x04)
+        MAV_CMD_USER_1 (31010)                        : reset yaw / clear yaw (ex 0x52/0xA2)
+        MAV_CMD_USER_2 (31011)                        : reset odometrie (ex 0x0F)
+
+  Messages CUSTOM (ci-dessous) : uniquement ce qu'aucun standard ne couvre proprement.
+  IDs dans la plage >= 42000 (hors common.xml) pour eviter toute collision.
+  Adressage : sysid STM32=1, ESP32=2, Teensy=3 ; compid=1 (AUTOPILOT1) ; hote sysid=255.
+-->
+<mavlink>
+  <include>common.xml</include>
+  <messages>
+    <message id="42001" name="BAMBOO_WHEEL_STATE">
+      <description>Etat cinematique mesure du chassis (remplace 0x0A, partie vitesses). vx/vy/wz issus de l'odometrie roue + PID embarque. La batterie passe par SYS_STATUS.</description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">Horloge carte depuis le boot.</field>
+      <field type="float" name="vx" units="m/s">Vitesse lineaire avant (repere chassis).</field>
+      <field type="float" name="vy" units="m/s">Vitesse lineaire laterale (0 sur chassis differentiel/4-roues).</field>
+      <field type="float" name="wz" units="rad/s">Vitesse angulaire de lacet.</field>
+    </message>
+    <message id="42002" name="BAMBOO_MOTOR_PWM">
+      <description>Consigne PWM brute par moteur en boucle OUVERTE (remplace 0x10 MOTOR). Usage diagnostic/banc, roues surelevees.</description>
+      <field type="int8_t[4]" name="pwm" units="%">PWM signe par moteur M1..M4, -100..100 %.</field>
+    </message>
+    <message id="42003" name="BAMBOO_ENCODERS">
+      <description>Comptage encodeur cumulatif par moteur (remplace 0x0D ENCODER). Aucun message standard ne porte de comptage brut.</description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">Horloge carte depuis le boot.</field>
+      <field type="int32_t[4]" name="counts">Comptage cumulatif M1..M4 (tics).</field>
+    </message>
+    <message id="42004" name="BAMBOO_CMD_VEL">
+      <description>Consigne de vitesse hote->carte (remplace 0x12 MOTION). La kinematics differentielle + le PID par roue tournent SUR la carte : on n'envoie que le Twist. Tout a zero -> arret franc (BRAKE).</description>
+      <field type="float" name="vx" units="m/s">Vitesse lineaire avant demandee.</field>
+      <field type="float" name="vy" units="m/s">Vitesse laterale demandee (ignoree hors mecanum).</field>
+      <field type="float" name="wz" units="rad/s">Vitesse angulaire de lacet demandee.</field>
+    </message>
+    <message id="42005" name="BAMBOO_MAG">
+      <description>Champ magnetique 3 axes (extension ESP32 WaveShare AK09918C ; remplace 0x0B). La STM32/Teensy (MPU6050 sans magneto) ne l'emettent pas.</description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">Horloge carte depuis le boot.</field>
+      <field type="float" name="mx" units="uT">Composante X.</field>
+      <field type="float" name="my" units="uT">Composante Y.</field>
+      <field type="float" name="mz" units="uT">Composante Z.</field>
+    </message>
+  </messages>
+</mavlink>
