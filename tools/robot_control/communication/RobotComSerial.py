@@ -12,6 +12,7 @@ thread lecteur -> pas de conflit read/write sur le handle.
 
 /!\ Un seul programme peut tenir COM4 a la fois : couper le serveur MCP avant.
 """
+import math
 import os
 import sys
 import threading
@@ -48,6 +49,7 @@ SAVE_VERIFY = 0x5F            # octet de garde : ecrit en flash si egal, sinon R
 
 # Codes fonction auto-report (miroir de ros_monitor.py)
 REPORT_SPEED = 0x0A        # Vx,Vy,Vz + batterie
+REPORT_MAG = 0x0B          # mx,my,mz champ magnetique (extension ESP32 WaveShare)
 REPORT_IMU_ATT = 0x0C      # roll, pitch, yaw
 REPORT_ENCODER = 0x0D      # M1..M4 comptage cumulatif
 
@@ -77,6 +79,11 @@ class RobotComSerial:
         self.yaw = None                # deg
         self.roll = self.pitch = None  # deg
         self.encoders = None           # [M1..M4]
+        # Champ magnetique (extension carte ESP32 WaveShare, trame 0x0B ; la STM32
+        # ne l'emet pas -> reste None). mag = (mx, my, mz) en uT ; heading = cap
+        # boussole en degres [0..360[ derive de (mx, my).
+        self.mag = None
+        self.heading = None
         self.ok = 0
         self.bad = 0
 
@@ -85,9 +92,11 @@ class RobotComSerial:
         self.ts_speed = None           # ms carte (trame 0x0A vitesse+batterie)
         self.ts_imu = None             # ms carte (trame 0x0C attitude)
         self.ts_enc = None             # ms carte (trame 0x0D encodeurs)
+        self.ts_mag = None             # ms carte (trame 0x0B magneto, ESP32)
         self.speed_t = 0.0             # time.time() de la derniere trame vitesse
         self.imu_t = 0.0               # time.time() de la derniere trame attitude
         self.enc_t = 0.0               # time.time() de la derniere trame encodeurs
+        self.mag_t = 0.0               # time.time() de la derniere trame magneto
 
         # Rapports requete/reponse (REQUEST_DATA 0x50 -> report) + horodatage :
         # une lecture ecrit la requete puis attend un horodatage plus recent.
@@ -248,6 +257,18 @@ class RobotComSerial:
             if self.tel:
                 self.tel.log_rx("imu", roll=self.roll, pitch=self.pitch,
                                 yaw=self.yaw)
+        elif func == REPORT_MAG and len(data) >= 10:
+            # 0x0B (ESP32) : [ts u32][mx i16][my i16][mz i16] en 0.1 uT.
+            mx = int.from_bytes(data[4:6], "little", signed=True) / 10.0
+            my = int.from_bytes(data[6:8], "little", signed=True) / 10.0
+            mz = int.from_bytes(data[8:10], "little", signed=True) / 10.0
+            self.mag = (mx, my, mz)
+            # cap boussole (0 = +X, sens trigo) ramene dans [0..360[
+            self.heading = math.degrees(math.atan2(my, mx)) % 360.0
+            self.ts_mag = u32(data, 0)                # timestamp carte (ms)
+            self.mag_t = time.time()
+            if self.tel:
+                self.tel.log_rx("mag", mx=mx, my=my, mz=mz, heading=self.heading)
         elif func == REPORT_ENCODER and len(data) >= 20:
             d = decode_encoder(data)
             self.encoders = [d[f"M{i + 1}"] for i in range(4)]
@@ -292,10 +313,13 @@ class RobotComSerial:
                 "roll": self.roll, "pitch": self.pitch,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
+                "mag": self.mag, "heading": self.heading,
                 "ts_speed": self.ts_speed, "ts_imu": self.ts_imu, "ts_enc": self.ts_enc,
+                "ts_mag": self.ts_mag,
                 "speed_age": (now - self.speed_t) if self.speed_t else None,
                 "imu_age": (now - self.imu_t) if self.imu_t else None,
                 "enc_age": (now - self.enc_t) if self.enc_t else None,
+                "mag_age": (now - self.mag_t) if self.mag_t else None,
                 "ok": self.ok, "bad": self.bad,
             }
 

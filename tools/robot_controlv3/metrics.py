@@ -37,6 +37,7 @@ REGISTRY = {
     "esp32_motor":   ("state",    "info"),
     "esp32_batt":    ("link",     "info"),
     "esp32_imu":     ("sensor",   "info"),
+    "esp32_mag":     ("sensor",   "info"),
     "esp32_rpm":     ("sensor",   "info"),
     "grove_ultra":   ("sensor",   "info"),
     "grove_imu":     ("sensor",   "info"),

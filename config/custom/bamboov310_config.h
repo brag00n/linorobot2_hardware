@@ -49,6 +49,9 @@
 // #define USE_MPU9250_IMU
 #define USE_QMI8658_IMU
 
+//uncomment the magnetometer you're using (carte WaveShare General Driver = AK09918C)
+#define USE_AK09918_MAG
+
 //Encoder
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS

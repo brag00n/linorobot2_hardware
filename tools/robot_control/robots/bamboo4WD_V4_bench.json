@@ -1,0 +1,26 @@
+{
+  "name": "bamboo4WD_V4_bench",
+  "label": "Bamboo v4 banc (STM32 + ESP32)",
+  "control": [
+    {
+      "kind": "stm32",
+      "vid_pid": ["1A86:7523"],
+      "port": "COM4",
+      "baud": 115200,
+      "cpr": 1320
+    },
+    {
+      "kind": "esp32",
+      "vid_pid": ["10C4:EA60"],
+      "port": "COM8",
+      "baud": 921600,
+      "cpr": 2114
+    }
+  ],
+  "sensors": {
+    "kind": "grovepi",
+    "vid_pid": ["0403:6001"],
+    "port": "COM6",
+    "baud": 115200
+  }
+}

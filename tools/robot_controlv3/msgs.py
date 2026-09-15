@@ -192,12 +192,18 @@ class Esp32Telemetry:
     vy: float = 0.0
     vz: float = 0.0
     rpm: Optional[list] = None
+    # Magnetometre AK09918 (specifique carte ESP32, trame 0x0B) : mag = (mx, my, mz)
+    # en uT ; heading = cap boussole en degres [0..360[ derive de (mx, my).
+    mag: Optional[Tuple[float, float, float]] = None
+    heading: Optional[float] = None
     ts_speed: Optional[int] = None
     ts_imu: Optional[int] = None
     ts_enc: Optional[int] = None
+    ts_mag: Optional[int] = None
     speed_age: Optional[float] = None
     imu_age: Optional[float] = None
     enc_age: Optional[float] = None
+    mag_age: Optional[float] = None
     ok: int = 0
     bad: int = 0
 

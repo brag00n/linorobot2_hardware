@@ -134,6 +134,70 @@ class IMUInterface{
             imu_msg_.orientation_covariance[4] = ori_cov[1];
             imu_msg_.orientation_covariance[8] = ori_cov[2];
 
+#ifdef ENABLE_CONNECTOR_SERIAL_FRAME
+            // --- Estimation d'orientation (filtre complementaire) ---
+            // Le wrapper QMI8658IMU (robot #2 WaveShare) ne calcule aucune orientation :
+            // sans ce bloc, imu_msg_.orientation reste (0,0,0,0) et ConnectorSerialFrame::
+            // publishImu emet des trames 0x0C a roll/pitch/yaw = 0 (bug HUD « IMU +0.0 »).
+            // On l'estime donc ici, a partir des grandeurs deja remplies ci-dessus :
+            //   - accelerometre (m/s^2) -> roll/pitch ABSOLUS via la gravite (basse freq) ;
+            //   - gyroscope (rad/s, deja calibre) -> integration (haute freq) + cap yaw
+            //     RELATIF (pas de reference absolue tant que le magneto n'est pas fusionne).
+            // Melange complementaire (alpha) puis conversion en quaternion (ordre ZYX) que
+            // publishImu reconvertit en angles d'Euler. Garde sous ENABLE_CONNECTOR_SERIAL_FRAME
+            // pour ne PAS toucher la nav micro-ROS (qui a sa propre fusion).
+            {
+                static uint32_t last_us = 0;
+                static float est_roll = 0.0f, est_pitch = 0.0f, est_yaw = 0.0f;
+                const uint32_t now_us = micros();
+                // (now_us - last_us) gere naturellement le wrap u32 (arithmetique modulaire).
+                float dt = (last_us == 0) ? 0.0f : (float)(now_us - last_us) * 1e-6f;
+                last_us = now_us;
+                if (dt < 0.0f || dt > 0.5f) dt = 0.0f; // garde-fou (1er appel, pause, overflow)
+
+                const float ax = imu_msg_.linear_acceleration.x;
+                const float ay = imu_msg_.linear_acceleration.y;
+                const float az = imu_msg_.linear_acceleration.z;
+                const float gx = imu_msg_.angular_velocity.x; // rad/s
+                const float gy = imu_msg_.angular_velocity.y;
+                const float gz = imu_msg_.angular_velocity.z;
+
+                // roll/pitch absolus depuis la gravite (rad)
+                const float acc_roll  = atan2f(ay, az);
+                const float acc_pitch = atan2f(-ax, sqrtf(ay * ay + az * az));
+
+                // integration gyro (haute frequence)
+                est_roll  += gx * dt;
+                est_pitch += gy * dt;
+                est_yaw   += gz * dt;
+
+                // melange complementaire sur roll/pitch ; l'accel n'est fiable que proche de 1 g
+                // (on la rejette en chute libre / choc, |a| trop faible ou trop fort).
+                const float amag2 = ax * ax + ay * ay + az * az;
+                const bool  acc_ok = (amag2 > 16.0f && amag2 < 400.0f); // ~ [4, 20] m/s^2
+                const float alpha = 0.98f;
+                if (dt == 0.0f) {                 // amorcage : cale sur l'accel
+                    est_roll = acc_roll; est_pitch = acc_pitch;
+                } else if (acc_ok) {
+                    est_roll  = alpha * est_roll  + (1.0f - alpha) * acc_roll;
+                    est_pitch = alpha * est_pitch + (1.0f - alpha) * acc_pitch;
+                }
+
+                // normalise le yaw dans [-PI, PI]
+                if (est_yaw >  PI) est_yaw -= 2.0f * PI;
+                else if (est_yaw < -PI) est_yaw += 2.0f * PI;
+
+                // Euler (roll,pitch,yaw) -> quaternion, ordre ZYX
+                const float cr = cosf(est_roll * 0.5f),  sr = sinf(est_roll * 0.5f);
+                const float cp = cosf(est_pitch * 0.5f), sp = sinf(est_pitch * 0.5f);
+                const float cy = cosf(est_yaw * 0.5f),   sy = sinf(est_yaw * 0.5f);
+                imu_msg_.orientation.w = cr * cp * cy + sr * sp * sy;
+                imu_msg_.orientation.x = sr * cp * cy - cr * sp * sy;
+                imu_msg_.orientation.y = cr * sp * cy + sr * cp * sy;
+                imu_msg_.orientation.z = cr * cp * sy - sr * sp * cy;
+            }
+#endif // ENABLE_CONNECTOR_SERIAL_FRAME
+
 #ifdef IMU_TWEAK
             IMU_TWEAK
 #endif

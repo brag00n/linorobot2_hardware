@@ -51,10 +51,11 @@ class WSEsp32Node(Node):
             roll=snap.get("roll"), pitch=snap.get("pitch"),
             vx=snap.get("vx", 0.0), vy=snap.get("vy", 0.0), vz=snap.get("vz", 0.0),
             rpm=rpm,
+            mag=snap.get("mag"), heading=snap.get("heading"),
             ts_speed=snap.get("ts_speed"), ts_imu=snap.get("ts_imu"),
-            ts_enc=snap.get("ts_enc"),
+            ts_enc=snap.get("ts_enc"), ts_mag=snap.get("ts_mag"),
             speed_age=snap.get("speed_age"), imu_age=snap.get("imu_age"),
-            enc_age=snap.get("enc_age"),
+            enc_age=snap.get("enc_age"), mag_age=snap.get("mag_age"),
             ok=snap.get("ok", 0), bad=snap.get("bad", 0)))
 
     def on_stop(self):

@@ -456,11 +456,12 @@ void publishData()
     mag_msg.magnetic_field.z -= mag_bias[2];
 #endif
 #ifndef USE_FAKE_MAG
-  #ifdef ENABLE_CONNECTOR_CONTROL
+  // Le connecteur trames binaires ignore l'en-tete (pas de type ROS Mag_t.header).
+  #if defined(ENABLE_CONNECTOR_CONTROL) && !defined(ENABLE_CONNECTOR_SERIAL_FRAME)
     struct timespec time_stamp = connectorROS.getTime();
     mag_msg.header.stamp.sec = time_stamp.tv_sec;
     mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-  #endif // ENABLE_CONNECTOR_CONTROL
+  #endif // ENABLE_CONNECTOR_CONTROL && !ENABLE_CONNECTOR_SERIAL_FRAME
 #endif // USE_FAKE_MAG
 #ifndef USE_FAKE_MAG
 

@@ -143,16 +143,19 @@ def _card_bg(frame, x, y, w, h, alpha=0.55):
     roi[:] = cv2.addWeighted(roi, 1.0 - alpha, np.zeros_like(roi), 0.0, 0.0)
 
 
-def _card_frame(frame, x, y, w, h, title, port, present, active):
+def _card_frame(frame, x, y, w, h, title, port, present, active, port_col=None):
     """Cadre pointille (TAILLE FIXE) + en-tete « ● TITRE  port ». Rend l'y du 1er
-    contenu. present -> cadre/titre clairs ; active -> pastille verte."""
+    contenu. present -> cadre/titre clairs ; active -> pastille verte. `port_col`
+    force la couleur de l'etiquette port (ex. orange sur trames erronees) ; None =
+    couleur par defaut selon present."""
     _card_bg(frame, x, y, w, h)
     _dashed_rect(frame, x, y, w, h, _C_BORDER if present else _C_BORDER_OFF)
     hy = y + 18
     cv2.circle(frame, (x + 13, hy - 5), 5, _C_ON if active else _C_OFF, -1)
     _put(frame, x + 25, hy, title, _C_TITLE if present else _C_TITLE_OFF, 0.5)
     if port:
-        _put(frame, x + 92, hy, port, _C_LABEL if present else _C_TITLE_OFF, 0.45)
+        col = port_col if port_col is not None else (_C_LABEL if present else _C_TITLE_OFF)
+        _put(frame, x + 92, hy, port, col, 0.45)
     return y + 38
 
 
@@ -281,18 +284,22 @@ def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
         _draw_rpm_bars(frame, x + 10, yc + 112, snap.get("rpm"))
 
 
-def _draw_rpm_bars(frame, x, y, rpm):
+def _draw_rpm_bars(frame, x, y, rpm, hs_m2=True):
     """4 barres BIPOLAIRES de vitesse de rotation (tours/MINUTE) : 0 au CENTRE,
     remplissage a DROITE si rpm>0 (avant, vert) / a GAUCHE si rpm<0 (arriere, orange).
-    Echelle commune normalisee sur max(|rpm|) des moteurs VALIDES (M1/M3/M4) avec
-    plancher. M2 = encodeur HS (bamboo-v4-hardware-faults) : barre PLEINE grise + « HS »."""
+    Echelle commune normalisee sur max(|rpm|) des moteurs VALIDES avec plancher.
+    `hs_m2` : M2 = encodeur HS (SPECIFIQUE au robot STM32 YahBoom,
+    cf. bamboo-v4-hardware-faults) -> barre PLEINE grise + « HS ». La carte ESP32
+    WaveShare a des moteurs differents (encodeurs A/B valides) -> hs_m2=False."""
     _put(frame, x, y, "rpm", _C_LABEL, 0.42, 1)
     bx, bw = x + 24, 210
     cxb = bx + bw // 2
     half = bw // 2
-    # echelle commune : max |rpm| des moteurs valides (indices 0,2,3), plancher 30 rpm
+    # echelle commune : max |rpm| des moteurs valides, plancher 30 rpm. Sur STM32, M2
+    # (indice 1) est exclu de l'echelle (encodeur mort) ; sinon les 4 comptent.
+    valid_idx = (0, 2, 3) if hs_m2 else (0, 1, 2, 3)
     if rpm is not None:
-        live = [abs(rpm[i]) for i in (0, 2, 3) if i < len(rpm) and rpm[i] is not None]
+        live = [abs(rpm[i]) for i in valid_idx if i < len(rpm) and rpm[i] is not None]
         scale = max(30.0, max(live) if live else 30.0)
     else:
         scale = 30.0
@@ -302,7 +309,7 @@ def _draw_rpm_bars(frame, x, y, rpm):
         _put(frame, x, ry, "M%d" % (i + 1), _C_LABEL, 0.42, 1)
         cv2.rectangle(frame, (bx, top), (bx + bw, bot), (60, 60, 60), 1)   # rail
         cv2.line(frame, (cxb, top), (cxb, bot), (90, 90, 90), 1)           # repere 0
-        if i == 1:                                   # M2 : encodeur mort -> HS
+        if hs_m2 and i == 1:                         # M2 STM32 : encodeur mort -> HS
             cv2.rectangle(frame, (bx, top), (bx + bw, bot), (90, 90, 90), -1)
             _put(frame, bx + bw + 8, ry, "HS", _C_OFF, 0.42, 1)
             continue
@@ -331,8 +338,13 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
     sous-bloc est gate par son groupe de metriques (cible HMI)."""
     present = bool(es is not None and es.connected)
     fresh = bool(present and es.speed_age is not None and es.speed_age < 1.5)
+    # Etiquette du port : orange (alerte) des que la carte a accumule > 2 trames
+    # erronees (bruit ligne / desync), sinon OK / -- selon reception. Remplace
+    # l'ancien champ « trames X/Y » (demande utilisateur).
+    bad = es.bad if present else 0
     port = f"{port_name} {'OK' if (present and es.ok) else '--'}" if present else "absente"
-    yc = _card_frame(frame, x, y, 320, 190, "WSESP32", port, present, fresh)
+    port_col = _C_WARN if bad > 2 else None
+    yc = _card_frame(frame, x, y, 320, 190, "WSESP32", port, present, fresh, port_col)
 
     def _ang(v):
         return f"{v:+6.1f}" if v is not None else "    --"
@@ -347,10 +359,14 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
             (185, "wz", _C_LABEL), (222, f"{vz:+.2f}r/s", vcol)])
     if _hmi(mcfg, "esp32_batt"):
         batt = f"{es.battery:.1f}V" if (present and es.battery is not None) else "--"
-        okbad = f"{es.ok}/{es.bad}" if present else "--"
+        _row(frame, x, yc + 19, [(10, "batt", _C_LABEL), (98, batt, _C_VAL)])
+    if _hmi(mcfg, "esp32_mag"):
+        # cap boussole (magnetometre AK09918, trame 0x0B) : degres [0..360[
+        fresh_mag = bool(present and es.mag_age is not None and es.mag_age < 1.5)
+        cap = (f"{es.heading:5.1f}deg"
+               if (fresh_mag and es.heading is not None) else "    --")
         _row(frame, x, yc + 19, [
-            (10, "batt", _C_LABEL), (98, batt, _C_VAL),
-            (170, "trames", _C_LABEL), (258, okbad, _C_LABEL)])
+            (170, "cap", _C_LABEL), (258, cap, _C_IMU if fresh_mag else _C_OFF)])
     if _hmi(mcfg, "esp32_imu"):
         r = es.roll if present else None
         p = es.pitch if present else None
@@ -361,7 +377,9 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
         _row(frame, x, yc + 57, [
             (10, "    yaw", _C_LABEL), (95, _ang(yw), _C_IMU)])
     if _hmi(mcfg, "esp32_rpm"):
-        _draw_rpm_bars(frame, x + 10, yc + 74, es.rpm if present else None)
+        # hs_m2=False : les moteurs ESP32 (encodeurs A/B) sont tous valides,
+        # contrairement au STM32 (M2 encodeur mort).
+        _draw_rpm_bars(frame, x + 10, yc + 74, es.rpm if present else None, hs_m2=False)
 
 
 def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
@@ -652,22 +670,25 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
             _put(frame, x + pad + lw + lg, ty, d,
                  (200, 210, 200) if lit else (160, 160, 160), sd, 1)
         x += colw + colgap
+    return x - colgap                              # bord droit du dernier groupe dessine
 
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
                     key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None,
                     es=None, esp32_port=None):
-    """Dispose la carte CAM (haut-gauche), la PILE de cartes materielles (colonne
-    droite) et la matrice de boutons (bas-gauche).
+    """Dispose les cartes materielles aux zones dediees de l'ecran + la matrice
+    de boutons (bas-gauche).
 
-    La colonne droite est PILOTEE PAR L'ETAT (exigence : « afficher toutes les cartes
-    connectees ») : on empile de haut en bas une carte par carte de CONTROLE configuree
-    -- STM32 (`port_name`) puis ESP32 WaveShare (`esp32_port`) -- puis la carte capteurs
-    GROVE dessous. Sur un robot mono-carte, seule sa carte de controle + GROVE
-    apparaissent (comportement historique : STM32 en haut-droit, GROVE en bas-droit) ;
-    sur un banc STM32+ESP32, les DEUX cartes de controle s'affichent, GROVE sous la pile.
-    Chaque carte garde sa gestion present/absent (cadre grise + « -- »).
+    Zones (exigence : « afficher toutes les cartes connectees ») :
+      - CAM      : haut-gauche ;
+      - STM32    : haut-droit (carte de controle historique, si `port_name`) ;
+      - GROVE    : bas-droit (carte capteurs) ;
+      - WSESP32  : BAS-CENTRE (carte de controle ESP32 WaveShare, si `esp32_port`) --
+                   zone propre et bien visible, demandee explicitement.
+    Sur un robot mono-carte, seule sa carte de controle + GROVE apparaissent ; sur un
+    banc STM32+ESP32, les DEUX s'affichent (STM32 haut-droit, ESP32 bas-centre) sans se
+    chevaucher. Chaque carte garde sa gestion present/absent (cadre grise + « -- »).
     `key_flash` = index de boutons a eclairer (touches recemment pressees)."""
     fw, fh = frame.shape[1], frame.shape[0]
     m, gap = 8, 8
@@ -675,28 +696,28 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
     _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps,
                    tstate, mcfg=mcfg)
 
-    # --- pile des cartes de controle (colonne droite, de haut en bas) ---
-    y = m
-    controls = 0
-    if port_name is not None:                     # carte STM32 configuree
-        _draw_stm_card(frame, rx, y, bool(link and link.connected), port_name, snap,
+    # --- carte de controle STM32 : haut-droit (si configuree) ---
+    if port_name is not None:
+        _draw_stm_card(frame, rx, m, bool(link and link.connected), port_name, snap,
                        pt, motion_on, smooth, mcfg=mcfg, cmdvel=cmdvel)
-        y += 212 + gap
-        controls += 1
-    if esp32_port is not None:                    # carte de controle ESP32 WaveShare
-        _draw_wsesp32_card(frame, rx, y, esp32_port, es, mcfg=mcfg)
-        y += 190 + gap
-        controls += 1
 
-    # GROVE : ancree en bas-droit (historique) sur robot mono-carte ; placee SOUS la
-    # pile de controle sur un banc multi-cartes pour ne pas chevaucher.
-    grove_y = fh - 176 - 16
-    if controls >= 2:
-        grove_y = max(grove_y, y)
-    _draw_grove_card(frame, rx, grove_y, gp_port, gp, mcfg=mcfg)
+    # --- carte capteurs GROVE : bas-droit ---
+    _draw_grove_card(frame, rx, fh - 176 - 16, gp_port, gp, mcfg=mcfg)
 
-    _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
-                      getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
+    # --- matrice de boutons (bas-gauche) : dessinee d'abord pour connaitre son bord
+    #     droit et y adosser la carte ESP32 sans chevauchement. ---
+    mx = _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
+                           getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
+
+    # --- carte de controle ESP32 WaveShare : BAS-CENTRE (zone dediee) ---
+    # Centree dans la bande libre du bas, entre la matrice (a gauche) et GROVE (a
+    # droite), pour un "bas-centre" propre sans mordre sur les boutons ni GROVE.
+    if esp32_port is not None:
+        band_l = (mx if mx is not None else 0) + gap
+        band_r = rx - gap
+        ex = band_l + max(0, (band_r - band_l - 320) // 2)
+        ey = fh - 190 - 16                         # ancree en bas (carte 190 de haut)
+        _draw_wsesp32_card(frame, ex, ey, esp32_port, es, mcfg=mcfg)
 
 
 class _ServoView:

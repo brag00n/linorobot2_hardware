@@ -20,10 +20,14 @@ Cette sous-classe n'ajoute que ce qui differe cote carte ESP32 :
     roue Waveshare n'est pas mesuree : les rpm/vitesses seront faux jusqu'a
     calibration (cf. plan, sous-tache separee).
 """
+import time
+
+import serial
+
 try:
-    from .RobotComSerial import RobotComSerial   # importe en tant que package
+    from .RobotComSerial import RobotComSerial, FrameParser   # importe en tant que package
 except ImportError:                              # importe a plat (dossier sur sys.path)
-    from RobotComSerial import RobotComSerial
+    from RobotComSerial import RobotComSerial, FrameParser
 
 # Defauts specifiques a la carte ESP32 WaveShare
 ESP32_DEFAULT_BAUD = 921600           # UART du firmware esp32_bamboo (monitor_speed)
@@ -42,6 +46,51 @@ class Esp32ComSerial(RobotComSerial):
                  cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID):
         super().__init__(port=port, baud=baud, telemetry=telemetry, cpr=cpr,
                          vid_pid=vid_pid)
+
+    def _probe(self, port, timeout=2.5):
+        """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames 0xFB.
+
+        /!\ Difference critique avec la STM32 (CH340) : sur les CP210x de la carte
+        WaveShare, DTR et RTS sont cables aux broches EN (reset) et GPIO0 (boot) de
+        l'ESP32. La forme `serial.Serial(port, baud)` de la classe de base asserte
+        ces lignes -> l'ESP32 part en reset/download et ne debite que des octets
+        parasites (0x80/0x00), jamais de trame valide. On construit donc le port
+        SANS l'ouvrir, on force dtr=rts=False, puis .open() : l'ESP32 tourne (ou
+        redemarre proprement une seule fois). Timeout allonge (2.5 s) pour couvrir
+        un eventuel reboot (~1.5 s) + quelques trames avant de valider.
+        """
+        try:
+            s = serial.Serial()
+            s.port = port
+            s.baudrate = self.baud
+            s.timeout = 0.1
+            s.dtr = False
+            s.rts = False
+            s.open()
+        except Exception:
+            return 0, None
+        parser = FrameParser()
+        ok = 0
+        t0 = time.time()
+        try:
+            while time.time() - t0 < timeout:
+                chunk = s.read(256)
+                if not chunk:
+                    continue
+                for _func, _data, good, _raw in parser.feed(chunk):
+                    if good:
+                        ok += 1
+                if ok >= 2:
+                    break
+        except Exception:
+            pass
+        if ok >= 2:
+            return ok, s
+        try:
+            s.close()
+        except Exception:
+            pass
+        return ok, None
 
     def _open(self):
         """Ouvre la liaison en VERIFIANT meme le port prefere par sniff.

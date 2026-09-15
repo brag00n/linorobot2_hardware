@@ -21,12 +21,14 @@
 #define WSF_APB_MM   (((float)LR_WHEELS_DISTANCE) * 0.5f * 1000.0f) // demi-voie/empattement en mm
 
 // Version firmware de ce connecteur (board-id ESP32 distinct pour les logs hote)
+// 1.1.0 : orientation IMU (filtre complementaire) + emission magneto AK09918 (0x0B).
 #define WSF_VER_MAJOR 1
-#define WSF_VER_MINOR 0
+#define WSF_VER_MINOR 1
 #define WSF_VER_PATCH 0
 
 // --- funcodes (identiques a la STM32, cf. ros_monitor.py / RobotComSerial.py) ---
 #define SF_REPORT_SPEED    0x0A // vitesse (Vx/Vy/Vz) + batterie
+#define SF_REPORT_MAG      0x0B // champ magnetique AK09918 (mx/my/mz) -- extension ESP32
 #define SF_REPORT_IMU_ATT  0x0C // attitude IMU (roll/pitch/yaw)
 #define SF_REPORT_ENCODER  0x0D // comptage encodeurs M1..M4
 #define SF_MOTOR           0x10 // pilotage moteur PWM (open loop)
@@ -125,8 +127,20 @@ void ConnectorSerialFrame::publishJoint(joint_state_t* js) {
     sendFrame(SF_REPORT_ENCODER, p, i);
 }
 
-// Pas encodes dans ce protocole (le HUD app n'expose pas mag/range/wifi de l'ESP32)
-void ConnectorSerialFrame::publishMag(MAGInterface::Mag_t) {}
+void ConnectorSerialFrame::publishMag(MAGInterface::Mag_t m) {
+    // 0x0B : [ts u32][mx i16][my i16][mz i16] -- champ magnetique en 0.1 uT.
+    // magnetic_field est en TESLA (AK09918 : brut * 0.15 uT = brut * 0.00000015 T) ;
+    // T -> 0.1 uT = * 1e7. Champ terrestre ~5e-5 T -> ~500 counts (i16 large).
+    // Extension propre a la carte ESP32 WaveShare (la STM32 n'emet jamais 0x0B) :
+    // l'app calcule le cap boussole a partir de mx/my.
+    uint8_t p[10]; uint8_t i = 0;
+    putU32(p, i, (uint32_t)millis());
+    putI16(p, i, clampI16(lroundf(m.magnetic_field.x * 1.0e7f)));
+    putI16(p, i, clampI16(lroundf(m.magnetic_field.y * 1.0e7f)));
+    putI16(p, i, clampI16(lroundf(m.magnetic_field.z * 1.0e7f)));
+    sendFrame(SF_REPORT_MAG, p, i);
+}
+// Pas encodes dans ce protocole (le HUD app n'expose pas range/wifi de l'ESP32)
 void ConnectorSerialFrame::publishRange(Range::Range_t) {}
 void ConnectorSerialFrame::publishWifi(DeviceWifi::DeviceWifi_t*) {}
 
