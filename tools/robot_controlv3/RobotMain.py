@@ -56,6 +56,8 @@ from robot_control.version import APP_VERSION
 from robot_control.communication.RobotComSerial import RobotComSerial, DEFAULT_CPR
 from robot_control.communication.Esp32ComSerial import (
     Esp32ComSerial, ESP32_DEFAULT_CPR, ESP32_DEFAULT_BAUD, ESP32_VID_PID)
+from robot_control.communication.TeensyComSerial import (
+    TeensyComSerial, TEENSY_DEFAULT_CPR, TEENSY_DEFAULT_BAUD, TEENSY_VID_PID)
 from robot_control.device.motion.RobotMotorDrive import RobotMotorDrive
 from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
 from robot_control.mcp import gateway
@@ -63,7 +65,7 @@ from robot_control.mcp import gateway
 from .roslite import Executor
 from .metrics import MetricsConfig
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
-                    WSEsp32Node, FaceRecogNode, FaceTrainNode)
+                    WSEsp32Node, TeensyNode, FaceRecogNode, FaceTrainNode)
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
                    ServoState, GrovePiTelemetry, Esp32Telemetry, RecognitionConfig,
                    RecognitionResult, TrainState)
@@ -382,6 +384,50 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
         _draw_rpm_bars(frame, x + 10, yc + 74, es.rpm if present else None, hs_m2=False)
 
 
+def _draw_teensy_card(frame, x, y, port_name, ts, mcfg=None):
+    """Carte TEENSY (3e carte de controle) : vitesses mesurees + batterie + IMU
+    (roll/pitch/yaw) + vitesses de rotation moteurs (barres bipolaires).
+
+    Calquee sur _draw_wsesp32_card mais SANS ligne magneto/cap : l'IMU MPU6050 n'a
+    pas de magnetometre (yaw relatif/derivant). `ts` = message TeensyTelemetry (None
+    si node absent). Les 4 encodeurs Teensy sont REELS -> hs_m2=False, 4 barres RPM
+    valides. Chaque sous-bloc est gate par son groupe de metriques (cible HMI)."""
+    present = bool(ts is not None and ts.connected)
+    fresh = bool(present and ts.speed_age is not None and ts.speed_age < 1.5)
+    bad = ts.bad if present else 0
+    port = f"{port_name} {'OK' if (present and ts.ok) else '--'}" if present else "absente"
+    port_col = _C_WARN if bad > 2 else None
+    yc = _card_frame(frame, x, y, 320, 190, "TEENSY", port, present, fresh, port_col)
+
+    def _ang(v):
+        return f"{v:+6.1f}" if v is not None else "    --"
+
+    if _hmi(mcfg, "teensy_motor"):
+        # vitesses mesurees (odometrie carte) : Vx m/s, Vz rad/s (Vy nul en differentiel)
+        vx = ts.vx if present else 0.0
+        vz = ts.vz if present else 0.0
+        vcol = _C_ON if (present and (vx or vz)) else _C_OFF
+        _row(frame, x, yc, [
+            (10, "vitesse", _C_LABEL), (98, f"{vx:+.2f}m/s", vcol),
+            (185, "wz", _C_LABEL), (222, f"{vz:+.2f}r/s", vcol)])
+    if _hmi(mcfg, "teensy_batt"):
+        batt = f"{ts.battery:.1f}V" if (present and ts.battery is not None) else "--"
+        _row(frame, x, yc + 19, [(10, "batt", _C_LABEL), (98, batt, _C_VAL)])
+    if _hmi(mcfg, "teensy_imu"):
+        # yaw RELATIF (integration gyro-z, pas de magneto) -> derive dans le temps
+        r = ts.roll if present else None
+        p = ts.pitch if present else None
+        yw = ts.yaw if present else None
+        _row(frame, x, yc + 38, [
+            (10, "IMU roll", _C_LABEL), (95, _ang(r), _C_IMU),
+            (170, "pitch", _C_LABEL), (228, _ang(p), _C_IMU)])
+        _row(frame, x, yc + 57, [
+            (10, "    yaw", _C_LABEL), (95, _ang(yw), _C_IMU)])
+    if _hmi(mcfg, "teensy_rpm"):
+        # hs_m2=False : les 4 encodeurs quadrature Teensy sont reels et valides.
+        _draw_rpm_bars(frame, x + 10, yc + 74, ts.rpm if present else None, hs_m2=False)
+
+
 def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
     """Carte GROVE (bas-droit) : 4 ultrasons (mm + barre) + IMU roll/pitch + bruts +
     telemetre IR (distance + barre de proximite). Sous-blocs gates par groupe (HMI)."""
@@ -676,7 +722,7 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
                     key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None,
-                    es=None, esp32_port=None):
+                    es=None, esp32_port=None, ts=None, teensy_port=None):
     """Dispose les cartes materielles aux zones dediees de l'ecran + la matrice
     de boutons (bas-gauche).
 
@@ -719,6 +765,17 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
         ey = fh - 190 - 16                         # ancree en bas (carte 190 de haut)
         _draw_wsesp32_card(frame, ex, ey, esp32_port, es, mcfg=mcfg)
 
+    # --- carte de controle TEENSY (3e carte) : BAS-CENTRE, EMPILEE au-dessus de
+    #     l'ESP32 si le banc en a une, sinon meme ancrage bas (robot mono-Teensy). ---
+    if teensy_port is not None:
+        band_l = (mx if mx is not None else 0) + gap
+        band_r = rx - gap
+        tx = band_l + max(0, (band_r - band_l - 320) // 2)
+        ty = fh - 190 - 16
+        if esp32_port is not None:
+            ty = ty - 190 - gap                    # empilee au-dessus de l'ESP32
+        _draw_teensy_card(frame, tx, ty, teensy_port, ts, mcfg=mcfg)
+
 
 class _ServoView:
     """Adaptateur : expose un ServoState (topic /servo/state) avec l'interface que
@@ -758,6 +815,8 @@ class RobotControlCore:
         self.stm32_port = None                   # port STM32 pour l'etiquette carte HUD (ou None)
         self.wsesp32 = None                      # node carte de controle ESP32 WaveShare (optionnel)
         self.esp32_port = None                   # port ESP32 pour l'etiquette carte HUD (ou None)
+        self.teensy = None                       # node 3e carte de controle Teensy (optionnel)
+        self.teensy_port = None                  # port Teensy pour l'etiquette carte HUD (ou None)
         self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
         self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.train = None                        # node dedie a l'apprentissage (optionnel)
@@ -840,6 +899,23 @@ class RobotControlCore:
                                        baud=c.get("baud") or ESP32_DEFAULT_BAUD,
                                        telemetry=self.tel, cpr=c.get("cpr"))
                 self.wsesp32 = node
+            elif c["kind"] == "teensy":
+                self.teensy_port = c["port"]
+                if is_primary:
+                    # Teensy = carte principale : le Core POSSEDE le lien (le node le
+                    # recoit injecte, comme BoardNode ; ferme par le Core au shutdown).
+                    link = TeensyComSerial(
+                        c["port"], c.get("baud") or TEENSY_DEFAULT_BAUD,
+                        telemetry=self.tel, cpr=c.get("cpr") or TEENSY_DEFAULT_CPR,
+                        vid_pid=c.get("vid_pid") or TEENSY_VID_PID)
+                    node = TeensyNode(link=link)
+                    self.link = link
+                else:
+                    # carte secondaire : le node possede/ferme son propre lien.
+                    node = TeensyNode(port=c["port"],
+                                      baud=c.get("baud") or TEENSY_DEFAULT_BAUD,
+                                      telemetry=self.tel, cpr=c.get("cpr"))
+                self.teensy = node
             else:
                 continue
             control_nodes.append(node)
@@ -1211,6 +1287,7 @@ class RobotControlCore:
             board = self.executor.latest("/board/telemetry")
             gp = self.executor.latest("/grovepi/telemetry")
             es = self.executor.latest("/wsesp32/telemetry")
+            ts = self.executor.latest("/teensy/telemetry")
             recog = self.executor.latest("/recognition/result")
 
             # 4) cadence d'affichage
@@ -1267,7 +1344,8 @@ class RobotControlCore:
                             self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent,
                             mcfg=self.mcfg, speed=self.motion.speedLevel,
                             cmdvel=(self.motion.lin, self.motion.ang),
-                            es=es, esp32_port=self.esp32_port)
+                            es=es, esp32_port=self.esp32_port,
+                            ts=ts, teensy_port=self.teensy_port)
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge

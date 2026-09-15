@@ -13,6 +13,7 @@ Graphe des topics (voir RobotMain) :
   /servo/state       ServoState      Servo   -> Core          (angles + fluidite)
   /board/telemetry   BoardTelemetry  Board   -> Core          (batterie, yaw, liaison)
   /wsesp32/telemetry Esp32Telemetry  WSEsp32 -> Core          (carte ESP32 WaveShare, meme protocole)
+  /teensy/telemetry  TeensyTelemetry Teensy  -> Core          (3e carte Teensy, meme protocole, sans magneto)
   /grovepi/telemetry GrovePiTelemetry GrovePi -> Core          (ultrasons + IMU, liaison)
 """
 from dataclasses import dataclass, field
@@ -204,6 +205,41 @@ class Esp32Telemetry:
     imu_age: Optional[float] = None
     enc_age: Optional[float] = None
     mag_age: Optional[float] = None
+    ok: int = 0
+    bad: int = 0
+
+
+@dataclass
+class TeensyTelemetry:
+    """Snapshot 3e carte de controle : un Teensy (bamboo4WD_V4_Teensy).
+
+    Miroir de BoardTelemetry : le Teensy (firmware teensy_bamboo, branche
+    SerialFrame) parle le MEME protocole de trames binaires que la STM32
+    (funcodes 0x0A/0x0C/0x0D identiques), seule la carte physique change
+    (TeensyComSerial). `connected` reflete l'etat du port (carte absente au
+    demarrage toleree : l'app tourne et l'affiche des qu'elle apparait).
+
+    /!\ PAS de magneto (IMU MPU6050, 6 axes) -> aucun champ mag/heading ni trame
+        0x0B, contrairement a Esp32Telemetry. Le yaw est RELATIF (integration
+        gyro-z cote firmware) et DERIVE dans le temps -- caveat documente.
+    Le Teensy a 4 encodeurs quadrature REELS -> rpm porte 4 valeurs reelles
+    (contrairement a l'ESP32 qui n'a qu'un odometre par cote).
+    """
+    connected: bool = False
+    battery: Optional[float] = None
+    yaw: Optional[float] = None
+    roll: Optional[float] = None
+    pitch: Optional[float] = None
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
+    rpm: Optional[list] = None
+    ts_speed: Optional[int] = None
+    ts_imu: Optional[int] = None
+    ts_enc: Optional[int] = None
+    speed_age: Optional[float] = None
+    imu_age: Optional[float] = None
+    enc_age: Optional[float] = None
     ok: int = 0
     bad: int = 0
 
