@@ -52,9 +52,14 @@ pont série STM32 existant. *(Le nœud-pont n'est pas fourni ici.)*
   est câblé `[SIG1, SIG2, VCC, GND]`, alors que le HC-SR04 attend `[VCC, Trig, Echo, GND]`.
   **Ne pas** brancher un câble Grove droit — câbler **fil à fil** : `VCC→5V`, `Trig→SIGx`,
   `Echo→SIGy`, `GND→GND`. Défaut : `Trig = D2/D4/D6/D8`, `Echo = D3/D5/D7/D9`.
-- **Sharp GP2Y0A710K0F** : connecteur 5 fils. **Vo (rouge) → A0** seul ; les **deux fils
-  VCC (bleu+jaune) ensemble → 5 V** ; les **deux fils GND (blanc+noir) ensemble → GND**.
-  Ajouter un **condensateur ~10 µF** entre VCC et GND au plus près du capteur (pointes de
+- **Sharp GP2Y0A710K0F** : connecteur 5 fils (Vo + VCC doublé + GND doublé). Se fier au
+  **numéro de broche** (fiable), **pas aux couleurs** (elles varient d'une nappe à l'autre) :
+  ① GND, ② VCC, ③ VCC, ④ **Vo (sortie)**, ⑤ GND. Sur l'exemplaire **validé au banc** ici
+  (couleurs vérifiées) : **Vo = vert → A0** seul ; **VCC = noir + jaune → 5 V** ;
+  **GND = rouge + bleu → GND**. En cas de doute, un **bip de continuité** entre chaque fil et
+  les plots sérigraphiés (Vo/Vcc/GND du PCB) lève l'ambiguïté avant de mettre sous tension.
+  Ajouter un **condensateur ≥ 10 µF** (électrolytique **polarisé** : + vers VCC ; un 0,1 µF
+  céramique en parallèle est un plus) entre VCC et GND au plus près du capteur (pointes de
   courant de la LED IR). Sortie **non linéaire** et ambiguë < ~0,6 m.
 - **Adaptateur USB↔série** sur le **header 6 broches** (GND/CTS/VCC/TXD/RXD/DTR),
   **sélecteur sur 5 V**, croiser TXD↔RXD. DTR requis pour l'auto-reset (flash bootloader).
@@ -149,13 +154,15 @@ Sauver en EEPROM :      FF FC 05 56 01 5F BB        (action=save, guard=0x5F)
   (~63–500 cm) ; `distance_cm = 137500 / (current_mV − 1125)`. Le module lit une **médiane de
   9 échantillons** (robuste aux pics) et conserve l'**ADC brut** dans la trame pour la
   calibration par exemplaire.
-- **Câblage** : Vo → A0 ; VCC/GND doublés ; condensateur ~10 µF (voir §3).
+- **Câblage** : broche ④ Vo → A0 ; VCC (②③) et GND (①⑤) doublés ; condensateur ≥ 10 µF (voir §3).
 - **Trames** : sortie `0x62 REPORT_IR` (`dist` u16 mm + `adc_brut` u16) ;
   configurable via `dev_id 0x20` (`pinA` = broche analogique).
 - **Santé** : `adc-low` (0x31) si ADC bloqué à 0 (débranché ?), `adc-high` (0x32) si saturé à 1023.
 - **Réf.** : [tutoriel makerguides](https://www.makerguides.com/sharp-gp2y0a710k0f-ir-distance-sensor-arduino-tutorial/),
   [datasheet Sharp](https://global.sharp/products/device/lineup/data/pdf/datasheet/gp2y0a710k_e.pdf).
-- **Code** : [`lib/SharpIR/`](lib/SharpIR/). *(Validation matérielle IR reportée : device secondaire.)*
+- **Code** : [`lib/SharpIR/`](lib/SharpIR/). ✅ **Validé HW (2026-09-14)** : câblé sur A0,
+  trame `0x62` reçue en continu (age ~0,05 s), ADC réactif à la distance (356 @2,2 m →
+  ~623 @0,7 m), bruit ±4 ADC (découplage efficace), conversion Sharp cohérente.
 
 ## 6. Configuration des devices
 
@@ -256,8 +263,8 @@ Les tests config/statut/version passent après reflash ≥ 0.2.0 ; `timesync`/`t
   `pulseIn` reste bloquant : lib `NewPing` (timer non bloquant) envisageable plus tard.
 - **Bus I²C partagé** : ports I²C Grove sur A4/A5 — surveiller les collisions d'adresses si
   d'autres capteurs I²C sont ajoutés.
-- **Sharp IR** : validation matérielle reportée (device secondaire) ; formule à recaler par
-  exemplaire via l'`adc_brut` de `0x62`.
+- **Sharp IR** : ✅ validé HW (2026-09-14) ; formule à recaler par exemplaire via l'`adc_brut`
+  de `0x62` si besoin de précision. Rappel : capteur **longue portée**, valeurs < ~1 m ambiguës.
 - **Nœud-pont ROS 2** : cible d'intégration, non implémenté dans ce dépôt.
 
 ## 12. Horodatage & synchronisation (v0.3)
