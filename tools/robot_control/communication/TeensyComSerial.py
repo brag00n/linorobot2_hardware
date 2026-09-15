@@ -43,6 +43,6 @@ class TeensyComSerial(RobotComSerial):
     """
 
     def __init__(self, port="COM9", baud=TEENSY_DEFAULT_BAUD, telemetry=None,
-                 cpr=TEENSY_DEFAULT_CPR, vid_pid=TEENSY_VID_PID):
+                 cpr=TEENSY_DEFAULT_CPR, vid_pid=TEENSY_VID_PID, rx_prefix=""):
         super().__init__(port=port, baud=baud, telemetry=telemetry, cpr=cpr,
-                         vid_pid=vid_pid)
+                         vid_pid=vid_pid, rx_prefix=rx_prefix)

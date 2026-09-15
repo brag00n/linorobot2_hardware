@@ -43,9 +43,9 @@ class Esp32ComSerial(RobotComSerial):
     """
 
     def __init__(self, port="COM8", baud=ESP32_DEFAULT_BAUD, telemetry=None,
-                 cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID):
+                 cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID, rx_prefix=""):
         super().__init__(port=port, baud=baud, telemetry=telemetry, cpr=cpr,
-                         vid_pid=vid_pid)
+                         vid_pid=vid_pid, rx_prefix=rx_prefix)
 
     def _probe(self, port, timeout=2.5):
         """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames 0xFB.

@@ -26,7 +26,8 @@ from ..msgs import TeensyTelemetry
 class TeensyNode(Node):
     """Publie l'etat de la 3e carte de controle Teensy sur /teensy/telemetry."""
 
-    def __init__(self, port="COM9", baud=115200, telemetry=None, cpr=None, link=None):
+    def __init__(self, port="COM9", baud=115200, telemetry=None, cpr=None, link=None,
+                 rx_prefix=""):
         super().__init__("teensy")
         if link is not None:
             # lien injecte par le Core (Teensy = carte de controle principale) :
@@ -34,10 +35,14 @@ class TeensyNode(Node):
             self.link = link
             self._owns_link = False
         else:
+            # carte secondaire : rx_prefix="teensy_" pour ne pas ecraser les cles
+            # rx:speed/imu/encoder de la carte primaire dans le state.json/log.
             if cpr is None:
-                self.link = TeensyComSerial(port, baud, telemetry=telemetry)
+                self.link = TeensyComSerial(port, baud, telemetry=telemetry,
+                                            rx_prefix=rx_prefix)
             else:
-                self.link = TeensyComSerial(port, baud, telemetry=telemetry, cpr=cpr)
+                self.link = TeensyComSerial(port, baud, telemetry=telemetry, cpr=cpr,
+                                            rx_prefix=rx_prefix)
             self._owns_link = True
         self._out = self.create_output("/teensy/telemetry", TeensyTelemetry)
 

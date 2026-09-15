@@ -44,6 +44,17 @@ def t_status(args):
     return _status_text(state, state.get("last", {}))
 
 
+def _rx_subs(last):
+    """Sous-cles rx: presentes dans `last`, carte PRINCIPALE d'abord (speed/imu/
+    encoder/mag) puis les cartes SECONDAIRES (teensy_*/esp32_*/grove_*) triees.
+    Permet a status/board_rx d'exposer TOUTES les cartes du banc, pas seulement la
+    primaire (les secondaires loggent rx:<prefix><sub>, cf. RobotComSerial.rx_prefix)."""
+    present = [k[3:] for k in last if k.startswith("rx:")]
+    primary = [s for s in ("speed", "imu", "encoder", "mag") if s in present]
+    others = sorted(s for s in present if s not in primary)
+    return primary + others
+
+
 def _status_text(state, last):
     alive = LOGS.running(state)
     lines = [
@@ -68,11 +79,10 @@ def _status_text(state, last):
         lines.append("detect    : seq=%s visages=%s nx=%s ny=%s aire=%s%%"
                      % (det.get("seq"), det.get("faces"), det.get("nx"),
                         det.get("ny"), det.get("area")))
-    for sub in ("speed", "imu", "encoder"):
+    for sub in _rx_subs(last):
         r = last.get("rx:" + sub)
-        if r:
-            fields = {k: v for k, v in r.items() if k not in ("t", "type", "sub")}
-            lines.append("rx.%-7s: %s" % (sub, json.dumps(fields, separators=(",", ":"))))
+        fields = {k: v for k, v in r.items() if k not in ("t", "type", "sub")}
+        lines.append("rx.%-13s: %s" % (sub, json.dumps(fields, separators=(",", ":"))))
     snap_age = LOGS.fmt_age(LOGS.snapshot)
     if snap_age is not None:
         lines.append("image     : %s (il y a %ss)" % (LOGS.snapshot, snap_age))
@@ -125,13 +135,12 @@ def t_board_rx(args):
         return "Aucune telemetrie (state.json absent)."
     last = state.get("last", {})
     out = []
-    for sub in ("speed", "imu", "encoder"):
+    for sub in _rx_subs(last):
         r = last.get("rx:" + sub)
-        if r:
-            age = round(time.time() - r.get("t", time.time()), 1)
-            fields = {k: v for k, v in r.items() if k not in ("t", "type", "sub")}
-            out.append("rx.%-7s (-%ss) %s"
-                       % (sub, age, json.dumps(fields, separators=(",", ":"))))
+        age = round(time.time() - r.get("t", time.time()), 1)
+        fields = {k: v for k, v in r.items() if k not in ("t", "type", "sub")}
+        out.append("rx.%-13s (-%ss) %s"
+                   % (sub, age, json.dumps(fields, separators=(",", ":"))))
     return "\n".join(out) if out else "Aucune trame recue de la carte pour l'instant."
 
 

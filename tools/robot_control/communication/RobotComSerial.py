@@ -60,10 +60,15 @@ class RobotComSerial:
     """Liaison serie non bloquante avec la carte. Reconnexion automatique."""
 
     def __init__(self, port="COM4", baud=115200, telemetry=None, cpr=DEFAULT_CPR,
-                 vid_pid=None):
+                 vid_pid=None, rx_prefix=""):
         self.port = port
         self.baud = baud
         self.tel = telemetry
+        # Prefixe des sous-cles rx:<...> loggees (state.json/jsonl). "" = carte
+        # PRINCIPALE (rx:speed/imu/encoder, lues telles quelles par le MCP status) ;
+        # une carte SECONDAIRE du banc recoit "teensy_"/"esp32_" pour ne PAS ecraser
+        # les cles de la primaire (sinon plusieurs cartes ecrivent rx:imu en concurrence).
+        self._rx_prefix = rx_prefix
         self.cpr = float(cpr)          # tics/tour (conversion tics/s -> tr/min)
         # VID:PID cibles ("VVVV:PPPP" hex) pour PRIORISER les bons ports au scan auto
         # (None = pas de filtrage : decouverte par sniff protocole seul, comportement
@@ -245,8 +250,8 @@ class RobotComSerial:
             self.ts_speed = u32(data, 0)              # timestamp carte (ms)
             self.speed_t = time.time()
             if self.tel:
-                self.tel.log_rx("speed", vx=self.vx, vy=self.vy, vz=self.vz,
-                                batt=self.battery)
+                self.tel.log_rx(self._rx_prefix + "speed", vx=self.vx, vy=self.vy,
+                                vz=self.vz, batt=self.battery)
         elif func == REPORT_IMU_ATT and len(data) >= 10:
             d = decode_imu_att(data)
             self.roll = d["Roll (deg)"]
@@ -255,8 +260,8 @@ class RobotComSerial:
             self.ts_imu = u32(data, 0)                # timestamp carte (ms)
             self.imu_t = time.time()
             if self.tel:
-                self.tel.log_rx("imu", roll=self.roll, pitch=self.pitch,
-                                yaw=self.yaw)
+                self.tel.log_rx(self._rx_prefix + "imu", roll=self.roll,
+                                pitch=self.pitch, yaw=self.yaw)
         elif func == REPORT_MAG and len(data) >= 10:
             # 0x0B (ESP32) : [ts u32][mx i16][my i16][mz i16] en 0.1 uT.
             mx = int.from_bytes(data[4:6], "little", signed=True) / 10.0
@@ -268,7 +273,8 @@ class RobotComSerial:
             self.ts_mag = u32(data, 0)                # timestamp carte (ms)
             self.mag_t = time.time()
             if self.tel:
-                self.tel.log_rx("mag", mx=mx, my=my, mz=mz, heading=self.heading)
+                self.tel.log_rx(self._rx_prefix + "mag", mx=mx, my=my, mz=mz,
+                                heading=self.heading)
         elif func == REPORT_ENCODER and len(data) >= 20:
             d = decode_encoder(data)
             self.encoders = [d[f"M{i + 1}"] for i in range(4)]
@@ -276,7 +282,7 @@ class RobotComSerial:
             self.enc_t = time.time()
             self.enc_hist.append((time.time(), list(self.encoders)))
             if self.tel:
-                self.tel.log_rx("encoder", m=list(self.encoders))
+                self.tel.log_rx(self._rx_prefix + "encoder", m=list(self.encoders))
         # --- rapports requete/reponse (lus par getCarType/getWheelGeom/getPid) ---
         elif func == FUNC_CAR_TYPE and len(data) >= 1:
             self.car_type = data[0]

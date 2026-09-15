@@ -895,9 +895,11 @@ class RobotControlCore:
                     self.link = link
                 else:
                     # carte secondaire : le node possede/ferme son propre lien.
+                    # rx_prefix="esp32_" -> rx:esp32_* distinct de la carte primaire.
                     node = WSEsp32Node(port=c["port"],
                                        baud=c.get("baud") or ESP32_DEFAULT_BAUD,
-                                       telemetry=self.tel, cpr=c.get("cpr"))
+                                       telemetry=self.tel, cpr=c.get("cpr"),
+                                       rx_prefix="esp32_")
                 self.wsesp32 = node
             elif c["kind"] == "teensy":
                 self.teensy_port = c["port"]
@@ -912,9 +914,11 @@ class RobotControlCore:
                     self.link = link
                 else:
                     # carte secondaire : le node possede/ferme son propre lien.
+                    # rx_prefix="teensy_" -> rx:teensy_* distinct de la carte primaire.
                     node = TeensyNode(port=c["port"],
                                       baud=c.get("baud") or TEENSY_DEFAULT_BAUD,
-                                      telemetry=self.tel, cpr=c.get("cpr"))
+                                      telemetry=self.tel, cpr=c.get("cpr"),
+                                      rx_prefix="teensy_")
                 self.teensy = node
             else:
                 continue

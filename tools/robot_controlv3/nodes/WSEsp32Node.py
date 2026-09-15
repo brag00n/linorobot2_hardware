@@ -23,7 +23,8 @@ from ..msgs import Esp32Telemetry
 class WSEsp32Node(Node):
     """Publie l'etat de la carte ESP32 WaveShare sur /wsesp32/telemetry."""
 
-    def __init__(self, port="COM8", baud=921600, telemetry=None, cpr=None, link=None):
+    def __init__(self, port="COM8", baud=921600, telemetry=None, cpr=None, link=None,
+                 rx_prefix=""):
         super().__init__("wsesp32")
         if link is not None:
             # lien injecte par le Core (ESP32 = carte de controle principale) :
@@ -31,10 +32,14 @@ class WSEsp32Node(Node):
             self.link = link
             self._owns_link = False
         else:
+            # carte secondaire : rx_prefix="esp32_" pour ne pas ecraser les cles
+            # rx:speed/imu/encoder/mag de la carte primaire dans le state.json/log.
             if cpr is None:
-                self.link = Esp32ComSerial(port, baud, telemetry=telemetry)
+                self.link = Esp32ComSerial(port, baud, telemetry=telemetry,
+                                           rx_prefix=rx_prefix)
             else:
-                self.link = Esp32ComSerial(port, baud, telemetry=telemetry, cpr=cpr)
+                self.link = Esp32ComSerial(port, baud, telemetry=telemetry, cpr=cpr,
+                                           rx_prefix=rx_prefix)
             self._owns_link = True
         self._out = self.create_output("/wsesp32/telemetry", Esp32Telemetry)
 
