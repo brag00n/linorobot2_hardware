@@ -133,6 +133,7 @@ struct TwistShim {
 TwistShim twist_msg;
 SerialFrame sf;
 ImuAtt      imuAtt;
+bool  g_imuOk = false;              // MPU6050 present ? sinon emitImu(0,0,0) en repli
 float g_vx = 0, g_vy = 0, g_wz = 0; // derniere vitesse mesuree (cache pour emitSpeed 0x0A)
 #endif
 
@@ -306,9 +307,13 @@ void setup()
 #else
     // --- Branche trames binaires : init IMU brute (MPU6050) + moteurs (HAT I2C),
     //     puis demarrage de la couche SerialFrame. Pas d'agent micro-ROS a joindre.
-    while(!imuAtt.begin()) {
+    // Init IMU brute (MPU6050) BORNEE et NON bloquante : sur ce banc le MPU6050 est
+    // porte par la carte capteurs GrovePi, pas le bus I2C du Teensy -> testConnection()
+    // echoue. On NE bloque PAS le transport (sinon loop()/SerialFrame jamais atteints) :
+    // 5 essais puis repli emitImu(0,0,0) (caveat yaw absent, documente dans le plan).
+    for (int i = 0; i < 5 && !(g_imuOk = imuAtt.begin()); i++) {
        flashLED(3,120);
-       delay(2000);
+       delay(300);
     }
     motor1_controller.initialize();
     motor2_controller.initialize();
@@ -858,8 +863,9 @@ void publishData()
     sf.emitSpeed(g_vx, g_vy, g_wz, 0);
 
     // 0x0C : attitude IMU (filtre complementaire ; yaw RELATIF -- pas de magneto).
-    float roll, pitch, yaw;
-    imuAtt.read(roll, pitch, yaw);
+    //        IMU absente -> emitImu(0,0,0) (repli, cf. init bornee dans setup()).
+    float roll = 0, pitch = 0, yaw = 0;
+    if (g_imuOk) imuAtt.read(roll, pitch, yaw);
     sf.emitImu(roll, pitch, yaw);
 
     // 0x0D : comptage encodeurs quadrature REELS M1..M4 (odometrie complete cote hote).
