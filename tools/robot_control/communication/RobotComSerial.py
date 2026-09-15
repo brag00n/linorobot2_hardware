@@ -57,11 +57,16 @@ DEFAULT_CPR = 1320.0       # tics/tour par defaut (Mecanum/4-roues 330RPM ; cf C
 class RobotComSerial:
     """Liaison serie non bloquante avec la carte. Reconnexion automatique."""
 
-    def __init__(self, port="COM4", baud=115200, telemetry=None, cpr=DEFAULT_CPR):
+    def __init__(self, port="COM4", baud=115200, telemetry=None, cpr=DEFAULT_CPR,
+                 vid_pid=None):
         self.port = port
         self.baud = baud
         self.tel = telemetry
         self.cpr = float(cpr)          # tics/tour (conversion tics/s -> tr/min)
+        # VID:PID cibles ("VVVV:PPPP" hex) pour PRIORISER les bons ports au scan auto
+        # (None = pas de filtrage : decouverte par sniff protocole seul, comportement
+        # historique STM32/CH340). Cf. Esp32ComSerial (CP210x) et les profils robot.
+        self.vid_pid = tuple(vid_pid) if vid_pid else None
         self.ser = None
         self.lock = threading.RLock()
         self.last_err = None
@@ -101,13 +106,40 @@ class RobotComSerial:
         self._reader.start()
 
     # --- connexion / thread lecteur ----------------------------------------
+    def _matches_vid_pid(self, p):
+        """True si le port <p> (ListPortInfo) matche l'un des VID:PID cibles.
+
+        Compare sur .vid/.pid (int) et, en repli, sur .hwid (ex. 'USB VID:PID=10C4:EA60
+        SER=...'). Insensible a la casse. Si aucun VID:PID cible : toujours False
+        (pas de priorisation, comportement historique).
+        """
+        if not self.vid_pid:
+            return False
+        want = {vp.upper().replace("VID:PID=", "").strip() for vp in self.vid_pid}
+        vid = getattr(p, "vid", None)
+        pid = getattr(p, "pid", None)
+        if vid is not None and pid is not None:
+            if f"{vid:04X}:{pid:04X}" in want:
+                return True
+        hwid = (getattr(p, "hwid", "") or "").upper()
+        return any(vp in hwid for vp in want)
+
     def _candidates(self):
-        """Autres ports COM disponibles (le port prefere exclu, deja tente)."""
+        """Autres ports COM disponibles (le port prefere exclu, deja tente).
+
+        Si des VID:PID cibles sont definis, les ports qui matchent sont places
+        EN TETE (priorises avant le sniff protocole) ; l'ordre relatif du reste
+        est conserve. Sans VID:PID cible : ordre systeme inchange (historique).
+        """
         try:
-            ports = [p.device for p in list_ports.comports()]
+            infos = [p for p in list_ports.comports() if p.device != self.port]
         except Exception:
-            ports = []
-        return [p for p in ports if p != self.port]
+            return []
+        if self.vid_pid:
+            preferred = [p.device for p in infos if self._matches_vid_pid(p)]
+            others = [p.device for p in infos if not self._matches_vid_pid(p)]
+            return preferred + others
+        return [p.device for p in infos]
 
     def _probe(self, port, timeout=0.8):
         """Ouvre un port candidat et compte les trames Yahboom valides.
