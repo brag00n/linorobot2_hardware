@@ -5,14 +5,16 @@ carte(s) de CONTROLE (kind stm32/esp32, VID:PID, port, baud, cpr) et la carte
 CAPTEURS (grovepi). Cela permet de basculer proprement entre robots :
   --robot bamboo4WD_V4_YBStm32   (defaut : STM32 YahBoom, comportement historique)
   --robot bamboo4WD_V4_WSEsp32   (ESP32 WaveShare parlant le meme protocole binaire)
+  --robot bamboo4WD_V4_Teensy    (Teensy parlant le meme protocole binaire, sans magneto)
 
-`control` peut etre une LISTE (profil « banc » STM32+ESP32 branches simultanement) :
+`control` peut etre une LISTE (profil « banc » STM32+ESP32+Teensy branches simultanement) :
 setup() (robot_controlv3) instancie alors un node par carte et le HUD empile toutes
 les cartes presentes.
 
 Resolution (resolve) : lit le profil du robot choisi puis applique les SURCHARGES
-CLI par carte (--port/--baud pour la STM32, --esp32-port pour l'ESP32,
---grovepi-port pour les capteurs ; --no-esp32/--no-grovepi desactivent). Les valeurs
+CLI par carte (--port/--baud pour la STM32, --esp32-port pour l'ESP32, --teensy-port
+pour le Teensy, --grovepi-port pour les capteurs ; --no-esp32/--no-teensy/--no-grovepi
+desactivent). Les valeurs
 « legacy » args.port/baud/grovepi_port sont repositionnees sur la carte de controle
 PRINCIPALE pour les chemins existants (bannieres, telemetrie, gateway MCP).
 """
@@ -85,6 +87,11 @@ def resolve(args):
             if getattr(args, "esp32_port", None):
                 entry["port"] = args.esp32_port
             if getattr(args, "no_esp32", False):
+                entry["enabled"] = False
+        elif kind == "teensy":
+            if getattr(args, "teensy_port", None):
+                entry["port"] = args.teensy_port
+            if getattr(args, "no_teensy", False):
                 entry["enabled"] = False
         controls.append(entry)
     args.controls = controls

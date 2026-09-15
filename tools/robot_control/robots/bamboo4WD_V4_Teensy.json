@@ -1,0 +1,17 @@
+{
+  "name": "bamboo4WD_V4_Teensy",
+  "label": "Bamboo v4 Teensy (trames binaires)",
+  "control": {
+    "kind": "teensy",
+    "vid_pid": ["16C0:0483"],
+    "port": "COM9",
+    "baud": 115200,
+    "cpr": 48
+  },
+  "sensors": {
+    "kind": "grovepi",
+    "vid_pid": ["0403:6001"],
+    "port": "COM6",
+    "baud": 115200
+  }
+}

@@ -107,6 +107,11 @@ def parse_args():
                          "scan auto CP210x 10C4:EA60 + sniff protocole si absent)")
     ap.add_argument("--no-esp32", action="store_true",
                     help="ne pas connecter la carte de controle ESP32 (robot_controlv3)")
+    ap.add_argument("--teensy-port", default=None,
+                    help="port serie 3e carte de controle Teensy (defaut : profil, COM9 ; "
+                         "scan auto PJRC 16C0:0483 si absent)")
+    ap.add_argument("--no-teensy", action="store_true",
+                    help="ne pas connecter la 3e carte de controle Teensy (robot_controlv3)")
     # --- carte capteurs GrovePi+ (utilisee par robot_controlv3 ; ignoree ici) ---
     ap.add_argument("--grovepi-port", default=None,
                     help="port serie carte capteurs GrovePi+ (defaut : profil, COM6 ; "

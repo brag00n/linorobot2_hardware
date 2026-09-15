@@ -1,6 +1,6 @@
 {
   "name": "bamboo4WD_V4_bench",
-  "label": "Bamboo v4 banc (STM32 + ESP32)",
+  "label": "Bamboo v4 banc (STM32 + ESP32 + Teensy)",
   "control": [
     {
       "kind": "stm32",
@@ -15,6 +15,13 @@
       "port": "COM8",
       "baud": 921600,
       "cpr": 2114
+    },
+    {
+      "kind": "teensy",
+      "vid_pid": ["16C0:0483"],
+      "port": "COM9",
+      "baud": 115200,
+      "cpr": 48
     }
   ],
   "sensors": {
