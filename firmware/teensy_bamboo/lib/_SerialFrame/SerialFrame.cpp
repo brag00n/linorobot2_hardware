@@ -4,8 +4,9 @@
 // Version firmware de ce connecteur Teensy (board-id distinct pour les logs hote).
 // 1.0.0 : premiere version trames binaires Teensy (0x0A vitesse+batt / 0x0C IMU /
 // 0x0D encodeurs reels). Pas de magneto (MPU6050) -> pas de 0x0B. Servos differes.
+// 1.1.0 : calibration du biais gyro au begin() (ImuAtt) -> derive yaw fortement reduite.
 #define TSF_VER_MAJOR 1
-#define TSF_VER_MINOR 0
+#define TSF_VER_MINOR 1
 #define TSF_VER_PATCH 0
 
 // --- funcodes (identiques a la STM32 / ESP32, cf. RobotComSerial.py) ---

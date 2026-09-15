@@ -12,6 +12,11 @@
 // ATTENTION : le MPU6050 n'a PAS de magnetometre -> le yaw est RELATIF et DERIVE dans le
 // temps (pas de nord absolu). C'est un caveat documente, pas un bug.
 //
+// Le biais du gyro (offset non nul a l'arret) est CALIBRE au begin() : moyenne des
+// echantillons gyro carte immobile, soustraite ensuite a chaque lecture. Reduit fortement
+// la derive du yaw (sinon integration d'un offset -> saturation ±187.7° observee). Un
+// garde-fou rejette la calibration si la carte bouge pendant l'echantillonnage (biais=0).
+//
 // N'inclut JAMAIS imu.h / imu_interface.h / default_imu.h / odometry.h.
 
 #include <Arduino.h>
@@ -26,7 +31,37 @@ class ImuAtt {
         Wire.begin();
         mpu_.initialize();
         if (!mpu_.testConnection()) return false;
+        calibrateGyro();
         lastUs_ = micros();
+        return true;
+    }
+
+    // Calibration du biais gyro : moyenne de N echantillons carte IMMOBILE.
+    // Rejette la calibration si le gyro bouge trop pendant l'echantillonnage (pic-a-pic
+    // au-dela d'un seuil) -> biais laisse a 0 plutot que de figer un mauvais offset.
+    // Renvoie true si la calibration a ete retenue.
+    bool calibrateGyro(uint16_t samples = 200, float maxSpanLsb = 200.0f) {
+        int16_t ax, ay, az, gx, gy, gz;
+        float sx = 0, sy = 0, sz = 0;
+        int16_t minx = 32767, maxx = -32768, miny = 32767, maxy = -32768,
+                minz = 32767, maxz = -32768;
+        for (uint16_t i = 0; i < samples; i++) {
+            mpu_.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+            sx += gx; sy += gy; sz += gz;
+            if (gx < minx) minx = gx; if (gx > maxx) maxx = gx;
+            if (gy < miny) miny = gy; if (gy > maxy) maxy = gy;
+            if (gz < minz) minz = gz; if (gz > maxz) maxz = gz;
+            delay(2); // ~200 ech. * 2 ms = ~0.4 s d'echantillonnage
+        }
+        // Carte en mouvement pendant la calib -> etendue trop grande, on rejette.
+        if ((maxx - minx) > maxSpanLsb || (maxy - miny) > maxSpanLsb ||
+            (maxz - minz) > maxSpanLsb) {
+            gxBias_ = gyBias_ = gzBias_ = 0.0f;
+            return false;
+        }
+        gxBias_ = sx / samples;
+        gyBias_ = sy / samples;
+        gzBias_ = sz / samples;
         return true;
     }
 
@@ -46,11 +81,11 @@ class ImuAtt {
         const float rollAcc  = atan2f(ayf, azf);
         const float pitchAcc = atan2f(-axf, sqrtf(ayf * ayf + azf * azf));
 
-        // Gyro -> rad/s (deg/s puis DEG_TO_RAD).
+        // Gyro -> rad/s (biais retire, puis deg/s puis DEG_TO_RAD).
         const float gyro_scale = (1.0f / 131.0f) * (float)DEG_TO_RAD;
-        const float gxr = gx * gyro_scale;
-        const float gyr = gy * gyro_scale;
-        const float gzr = gz * gyro_scale;
+        const float gxr = (gx - gxBias_) * gyro_scale;
+        const float gyr = (gy - gyBias_) * gyro_scale;
+        const float gzr = (gz - gzBias_) * gyro_scale;
 
         // Filtre complementaire : gyro (haute freq) + accel (basse freq) sur roll/pitch.
         const float alpha = 0.98f;
@@ -65,6 +100,7 @@ class ImuAtt {
   private:
     MPU6050  mpu_;
     float    roll_ = 0, pitch_ = 0, yaw_ = 0;
+    float    gxBias_ = 0, gyBias_ = 0, gzBias_ = 0; // biais gyro (LSB) mesures au begin()
     uint32_t lastUs_ = 0;
 };
 
