@@ -20,9 +20,10 @@ void Battery::initBattery(){
   if(!ina219.init()){
     Serial.println("INA219 not connected!");
   }
-  ina219.setADCMode(BIT_MODE_9);
-  ina219.setPGain(PG_320);
-  ina219.setBusRange(BRNG_16);
+  // INA219_WE (HEAD) prefixe desormais ses enums (BIT_MODE_9 -> INA219_BIT_MODE_9, etc.)
+  ina219.setADCMode(INA219_BIT_MODE_9);
+  ina219.setPGain(INA219_PG_320);
+  ina219.setBusRange(INA219_BRNG_16);
   ina219.setShuntSizeInOhms(0.01); // used in INA219.
 }
 

@@ -30,7 +30,16 @@
     #define ENABLE_CONNECTOR_WEB
 #endif // ENABLE_DEVICE_WIFI
 //#define ENABLE_MICRO_ROS
-#define ENABLE_CONNECTOR_ROS
+// ENABLE_CONNECTOR_SERIAL_FRAME peut etre defini par build_flags (env serie) ; il est
+// exclusif de micro-ROS/ConnectorMicroROS (meme UART @921600). A defaut, on garde ROS.
+#ifndef ENABLE_CONNECTOR_SERIAL_FRAME
+    #define ENABLE_CONNECTOR_ROS
+#endif
+// Macro partagee : logique de controle (moveBase/publishData/callbacks) commune aux deux
+// connecteurs de controle (micro-ROS OU trames binaires), reutilisant le symbole connectorROS.
+#if defined(ENABLE_CONNECTOR_ROS) || defined(ENABLE_CONNECTOR_SERIAL_FRAME)
+    #define ENABLE_CONNECTOR_CONTROL
+#endif
 
 #include "config.h"
 
@@ -121,6 +130,8 @@
 
 #ifdef ENABLE_CONNECTOR_ROS
     #include "ConnectorMicroROS.hpp"
+#elif defined(ENABLE_CONNECTOR_SERIAL_FRAME)
+    #include "ConnectorSerialFrame.hpp"
 #endif // ENABLE_CONNECTOR_ROS
 
 #ifdef ENABLE_CONNECTOR_WEB
@@ -214,6 +225,10 @@ DeviceWifi wifiDevice;
 
 #ifdef ENABLE_CONNECTOR_ROS
 ConnectorMicroROS  connectorROS;
+#elif defined(ENABLE_CONNECTOR_SERIAL_FRAME)
+// Reutilise le symbole connectorROS : toute la logique de controle (moveBase/publishData/
+// callbacks) reste inchangee, seul le transport diffère (trames binaires vs micro-ROS).
+ConnectorSerialFrame connectorROS;
 #endif // ENABLE_CONNECTOR_ROS
 
 #ifdef ENABLE_CONNECTOR_WEB
@@ -221,7 +236,7 @@ ConnectorWeb connectorWeb;
 #endif // ENABLE_DEVICE_WIFI
 
 
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
 #define EXECUTE_EVERY_N_MS(MS, X)  do { \
     static volatile int64_t init = -1; \
     if (init == -1) { init = connectorROS.getMillis();} \
@@ -233,7 +248,7 @@ ConnectorWeb connectorWeb;
     if (init == -1) { init = millis();} \
     if (millis() - init > MS) { X; init = millis();} \
   } while (0)
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 
 void flashLED(int n_times)
@@ -260,9 +275,9 @@ void update_oled(const char *line0, const char *line1, const char *line2, const 
 
 void fullStop()
 {
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.setTwist(0, 0, 0);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #ifdef ENABLE_DEVICE_MOTOR
     motor1_controller.brake();
@@ -301,14 +316,17 @@ void moveBase()
     if (isSyslog) syslog(LOG_DEBUG, "moveBase\n");
     // brake if there's no command received, or when it's only the first command sent
 
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
 
     //connectorROS.setTwist(0, 0, 0);
     if (!(connectorROS.getTwistX() == 0 && connectorROS.getTwistY() == 0 && connectorROS.getTwistZ() == 0)) {
         if (isSyslog) syslog(LOG_DEBUG, ("    firmware::moveBase (on js cmd 1): Twist:{x:" + String(connectorROS.getTwistX()) + ",y:" + String(connectorROS.getTwistY()) + ",z:" + String(connectorROS.getTwistZ()) + "}\n").c_str());
     }
 
-    if(((millis() - prev_cmd_time) >= 500) && connectorROS.getTwistX() != 0 && connectorROS.getTwistY() != 0 && connectorROS.getTwistZ() != 0)
+    // Fail-safe : si aucune cmd_vel depuis 500 ms alors qu'une consigne non nulle est active,
+    // on freine. Condition en OR (un seul axe non nul suffit) : en ligne droite Vy/Vz valent 0,
+    // l'ancien AND ne se declenchait jamais. C'est le garde-fou principal du mode serie filaire.
+    if(((millis() - prev_cmd_time) >= 500) && (connectorROS.getTwistX() != 0 || connectorROS.getTwistY() != 0 || connectorROS.getTwistZ() != 0))
     {
         connectorROS.setTwist(0, 0, 0);
         if (isSyslog) syslog(LOG_INFO, "    firmware::moveBase Stop (no activity)\n");
@@ -330,6 +348,13 @@ void moveBase()
     //float current_rpm4 = motor4_encoder.getRPM();
     float current_rpm3 = jointState[2].velocity= current_rpm1;
     float current_rpm4 = jointState[3].velocity= current_rpm2;
+
+    // Comptage cumulatif des encodeurs -> alimente la trame 0x0D (publishJoint).
+    // M3/M4 n'ont pas d'encodeur cable (recopie de M1/M2, comme les vitesses ci-dessus).
+    jointState[0].position = motor1_encoder.read();
+    jointState[1].position = motor2_encoder.read();
+    jointState[2].position = jointState[0].position;
+    jointState[3].position = jointState[1].position;
 
     jointState[0].velocity_requested= req_rpm.motor1;
     jointState[1].velocity_requested= req_rpm.motor2;
@@ -382,7 +407,7 @@ void moveBase()
         current_vel.angular_z
     );
 #endif // ENABLE_DEVICE_ENCODER
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 }
 
@@ -393,9 +418,9 @@ void publishData()
 
 #ifdef ENABLE_DEVICE_ENCODER
     Odometry::Odometry_data odom_msg = odometry.getData();
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.publishOdom(odom_msg);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #ifdef ENABLE_CONNECTOR_WEB
     connectorWeb.publishOdom(odom_msg);
@@ -411,9 +436,9 @@ void publishData()
 #endif // ENABLE_DEVICE_ENCODER
 #endif // USE_FAKE_IMU
 
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.publishImu(imu_msg);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #ifdef ENABLE_CONNECTOR_WEB
     connectorWeb.publishImu(imu_msg);
@@ -431,17 +456,17 @@ void publishData()
     mag_msg.magnetic_field.z -= mag_bias[2];
 #endif
 #ifndef USE_FAKE_MAG
-  #ifdef ENABLE_CONNECTOR_ROS
+  #ifdef ENABLE_CONNECTOR_CONTROL
     struct timespec time_stamp = connectorROS.getTime();
     mag_msg.header.stamp.sec = time_stamp.tv_sec;
     mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-  #endif // ENABLE_CONNECTOR_ROS
+  #endif // ENABLE_CONNECTOR_CONTROL
 #endif // USE_FAKE_MAG
 #ifndef USE_FAKE_MAG
 
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.publishMag(mag_msg);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #ifdef ENABLE_CONNECTOR_WEB
     connectorWeb.publishMag(mag_msg);
@@ -454,9 +479,9 @@ void publishData()
     EXECUTE_EVERY_N_MS(BATTERY_TIMER, {
 
         battery.readBattery();
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
         connectorROS.publishBattery(battery.getData());
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 #ifdef ENABLE_CONNECTOR_WEB
         connectorWeb.publishBattery(battery.getData());
 #endif // ENABLE_CONNECTOR_WEB
@@ -487,17 +512,17 @@ void publishData()
 #ifdef ENABLE_DEVICE_ULTRASONIC
 //#ifdef ECHO_PIN
     EXECUTE_EVERY_N_MS(RANGE_TIMER, {
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
         connectorROS.publishRange(range.getRange());
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
     });
 //#endif
 #endif // ENABLE_DEVICE_ULTRASONIC
 
 //EXECUTE_EVERY_N_MS(RANGE_TIMER, {
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.publishJoint(jointState);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #ifdef ENABLE_CONNECTOR_WEB
     connectorWeb.publishJoint(jointState);
@@ -519,9 +544,9 @@ void controlCallback(Connector::timer_t * timer, int64_t last_call_time,String s
 }
 
 void twistCallback(const Connector::Twist_t* pTwist,String source){
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     connectorROS.setTwist(pTwist->linear_x,pTwist->linear_y , pTwist->angular_z);
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
     if (isSyslog) syslog(LOG_DEBUG, ("   twistCallback: Twist:{x:" + String(pTwist->linear_x) + ",y:" + String(pTwist->linear_y) + ",z:" + String(pTwist->angular_z) + "}\n").c_str());
     setLed(!getLed());
@@ -549,10 +574,10 @@ void pidCallback(const Connector::Pid_t* pPid, String source){
 bool createEntities()
 {
 bool initROSOK=true,timeOK=true;
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     initROSOK=connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,NULL);
     timeOK=   connectorROS.syncTime(); // synchronize time with the agent
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
     setLed(HIGH);
     if (isSyslog) syslog(LOG_DEBUG, "agent available\n");
     return (initROSOK && timeOK);
@@ -715,13 +740,13 @@ void setup()
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n"); 
 #endif // ENABLE_CONNECTOR_WEB
 
-#ifdef ENABLE_CONNECTOR_ROS
-    if (isSyslog) syslog(LOG_INFO, "--- init Agent ROS\n");
-    update_oled(NULL, "Init ROS Agent", NULL, NULL);
+#ifdef ENABLE_CONNECTOR_CONTROL
+    if (isSyslog) syslog(LOG_INFO, "--- init Agent control (ROS/SerialFrame)\n");
+    update_oled(NULL, "Init Ctrl Agent", NULL, NULL);
     connectorROS.setPID(K_P, K_I, K_D);
     connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,*pidCallback);
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n");
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 
 #ifdef BOARD_INIT_LATE // board specific setup
@@ -751,12 +776,12 @@ void loop() {
     connectorWeb.listenAgent(0);
 #endif // ENABLE_CONNECTOR_WEB
 
-#ifdef ENABLE_CONNECTOR_ROS
+#ifdef ENABLE_CONNECTOR_CONTROL
     if (connectorROS.pingAgent(100,1))
        connectorROS.listenAgent(0);
     else
        fullStop();
-#endif // ENABLE_CONNECTOR_ROS
+#endif // ENABLE_CONNECTOR_CONTROL
 
 #if defined(ENABLE_DEVICE_WIFI) && defined(ENABLE_OTA)
     if (wifiDevice.isReady()) { runOta();  }
