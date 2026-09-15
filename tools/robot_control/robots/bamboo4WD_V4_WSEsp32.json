@@ -1,0 +1,17 @@
+{
+  "name": "bamboo4WD_V4_WSEsp32",
+  "label": "Bamboo v4 WaveShare ESP32",
+  "control": {
+    "kind": "esp32",
+    "vid_pid": ["10C4:EA60"],
+    "port": "COM8",
+    "baud": 921600,
+    "cpr": 2114
+  },
+  "sensors": {
+    "kind": "grovepi",
+    "vid_pid": ["0403:6001"],
+    "port": "COM6",
+    "baud": 115200
+  }
+}

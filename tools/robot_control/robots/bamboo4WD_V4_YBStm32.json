@@ -1,0 +1,17 @@
+{
+  "name": "bamboo4WD_V4_YBStm32",
+  "label": "Bamboo v4 YahBoom STM32",
+  "control": {
+    "kind": "stm32",
+    "vid_pid": ["1A86:7523"],
+    "port": "COM4",
+    "baud": 115200,
+    "cpr": 1320
+  },
+  "sensors": {
+    "kind": "grovepi",
+    "vid_pid": ["0403:6001"],
+    "port": "COM6",
+    "baud": 115200
+  }
+}

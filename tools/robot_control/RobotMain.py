@@ -51,6 +51,7 @@ import time
 
 import cv2
 
+from . import robot_profile
 from .lib.Telemetry import Telemetry
 from .version import APP_VERSION
 from .communication.RobotComSerial import RobotComSerial
@@ -90,12 +91,26 @@ def clamp_target(size):
 def parse_args():
     """Definit et lit les flags CLI (identiques a robot_control.old)."""
     ap = argparse.ArgumentParser(description="Controle Bamboo v4 : teleop + suivi visage")
-    ap.add_argument("--port", default="COM4", help="port serie carte STM32 (defaut COM4)")
-    ap.add_argument("--baud", type=int, default=115200)
+    # --- selection du robot (profil JSON robots/<name>.json ; cf. robot_profile) ---
+    ap.add_argument("--robot", default=robot_profile.DEFAULT_ROBOT,
+                    choices=robot_profile.available() or None,
+                    help="profil robot (defaut %s : STM32 YahBoom, comportement "
+                         "historique). bamboo4WD_V4_WSEsp32 = ESP32 WaveShare"
+                         % robot_profile.DEFAULT_ROBOT)
+    # Ports/baud : defaut None = valeur du PROFIL ; renseigner surcharge le profil.
+    ap.add_argument("--port", default=None,
+                    help="port serie carte de controle STM32 (defaut : profil, COM4)")
+    ap.add_argument("--baud", type=int, default=None,
+                    help="baud carte de controle STM32 (defaut : profil, 115200)")
+    ap.add_argument("--esp32-port", default=None,
+                    help="port serie carte de controle ESP32 WaveShare (defaut : profil ; "
+                         "scan auto CP210x 10C4:EA60 + sniff protocole si absent)")
+    ap.add_argument("--no-esp32", action="store_true",
+                    help="ne pas connecter la carte de controle ESP32 (robot_controlv3)")
     # --- carte capteurs GrovePi+ (utilisee par robot_controlv3 ; ignoree ici) ---
-    ap.add_argument("--grovepi-port", default="COM6",
-                    help="port serie carte capteurs GrovePi+ (defaut COM6 ; scan "
-                         "auto si absent). Utilise par robot_controlv3")
+    ap.add_argument("--grovepi-port", default=None,
+                    help="port serie carte capteurs GrovePi+ (defaut : profil, COM6 ; "
+                         "scan auto si absent). Utilise par robot_controlv3")
     ap.add_argument("--no-grovepi", action="store_true",
                     help="ne pas connecter la carte capteurs GrovePi+ (robot_controlv3)")
     ap.add_argument("--index", default="auto",
@@ -261,6 +276,10 @@ def parse_args():
     # une seule source de verite en aval (deadzone), pour les deux apps et le dessin.
     if args.target_size is not None:
         args.deadzone = args.target_size
+    # Resout le profil robot (--robot) en cartes concretes + surcharges CLI :
+    # renseigne args.controls / args.sensors / args.robot_label, et repositionne
+    # args.port/baud/grovepi_port sur la carte de controle principale.
+    robot_profile.resolve(args)
     return args
 
 
