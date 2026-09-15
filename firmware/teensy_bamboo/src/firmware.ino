@@ -20,9 +20,19 @@
 #define DISABLE_LOGGING
 //#define ENABLE_PARAMETER
 
+// --- Bascule de transport (meme motif que l'ESP32) : par defaut le firmware compile
+// le chemin micro-ROS (rclc) ; avec -D ENABLE_CONNECTOR_SERIAL_FRAME il compile a la
+// place la branche trames binaires Bamboo, EXCLUSIVE de micro-ROS sur le meme UART.
+// Le chemin micro-ROS reste 100% intact par defaut (build par defaut inchange).
+#ifndef ENABLE_CONNECTOR_SERIAL_FRAME
+  #define ENABLE_CONNECTOR_ROS
+#endif
+
 #include <Wire.h>
-#include <micro_ros_platformio.h>
 #include <stdio.h>
+
+#ifdef ENABLE_CONNECTOR_ROS
+#include <micro_ros_platformio.h>
 
 #ifdef ENABLE_PARAMETER
 //   #include <micro_ros_arduino.h>
@@ -42,17 +52,39 @@
 #include <sensor_msgs/msg/imu.h>
 #include <geometry_msgs/msg/vector3.h>
 #include <sensor_msgs/msg/joint_state.h>
+#endif // ENABLE_CONNECTOR_ROS
 
 #include "ArduinoLog.h"
 #include "config.h"
 #include "kinematics.h"
 #include "pid.h"
-#include "odometry.h"
-#include "imu.h"
 //#define ENCODER_USE_INTERRUPTS
 //#define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
 #include "motor.h"
+
+#ifdef ENABLE_CONNECTOR_ROS
+#include "odometry.h"   // tire micro_ros_utilities/*_msgs : JAMAIS dans la branche trames
+#include "imu.h"
+#else
+#include "SerialFrame.h" // couche trames binaires autonome (lib/_SerialFrame)
+#include "ImuAtt.h"      // attitude MPU6050 par filtre complementaire (pas de wrapper ROS)
+#endif
+
+// --- Prototypes GARDES des fonctions a signature micro-ROS ---
+// Le pre-processeur .ino d'Arduino genere des prototypes en IGNORANT les #ifdef : sans ces
+// declarations, il emettrait p.ex. `void controlCallback(rcl_timer_t*)` meme en mode trames
+// binaires, ou rcl_timer_t / Parameter / rcl_ret_t n'existent pas -> erreur de compilation.
+// Declarer nous-memes ces prototypes (memes gardes que les definitions) supprime la generation
+// automatique (ctags matche la signature en ignorant les gardes), tandis que les gardes les
+// excluent proprement de la compilation en mode trames.
+#ifdef ENABLE_CONNECTOR_ROS
+void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
+void rclErrorLoop(rcl_ret_t ret);
+#ifdef ENABLE_PARAMETER
+bool paramCallback(const Parameter * old_param, const Parameter * new_param, void * context);
+#endif
+#endif
 
 
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){rclErrorLoop(temp_rc);}}
@@ -66,6 +98,7 @@
 #define NR_OF_JOINTS 4
 #define SMOOTHING_CONST 0.95                // Coefficient for smoothing: smooth_pwm += (pwm - smooth_pwm)*SMOOTHING_CONST
 
+#ifdef ENABLE_CONNECTOR_ROS
 rcl_subscription_t twist_subscriber;
 rcl_publisher_t    odom_publisher;
 rcl_publisher_t    imu_publisher;
@@ -90,9 +123,23 @@ rcl_timer_t control_timer;
 rclc_parameter_server_t param_server;
 
 unsigned long long time_offset = 0;
+#else
+// Branche trames binaires : shim POD reproduisant twist_msg.linear.x/.y/.angular.z
+// (+ agregat = {0.0}) pour que moveBase()/stop()/fullStop() compilent INCHANGES.
+struct TwistShim {
+  struct { double x, y, z; } linear;
+  struct { double x, y, z; } angular;
+};
+TwistShim twist_msg;
+SerialFrame sf;
+ImuAtt      imuAtt;
+float g_vx = 0, g_vy = 0, g_wz = 0; // derniere vitesse mesuree (cache pour emitSpeed 0x0A)
+#endif
+
 unsigned long prev_cmd_time = 0;
 unsigned long prev_odom_update = 0;
 
+#ifdef ENABLE_CONNECTOR_ROS
 enum states
 {
   WAITING_AGENT,
@@ -100,6 +147,7 @@ enum states
   AGENT_CONNECTED,
   AGENT_DISCONNECTED
 } state = WAITING_AGENT;
+#endif
 
 float joint_rpm[NR_OF_JOINTS];
 float req_rpm[NR_OF_JOINTS];
@@ -130,8 +178,10 @@ Kinematics kinematics(
     LR_WHEELS_DISTANCE
 );
 
+#ifdef ENABLE_CONNECTOR_ROS
 Odometry odometry;
 IMU imu;
+#endif
 
 const char * kp_name         = "kp";
 const char * ki_name         = "ki";
@@ -151,7 +201,9 @@ long pos_motor3_previous=0;
 long pos_motor4_previous=0;
 
 //rclcpp::Logger logger = rclcpp::get_logger("motor_agent");
+#ifdef ENABLE_CONNECTOR_ROS
 rcl_publisher_t publisher_log;
+#endif
 bool isLogInit = false;
 char logBuffer[] = "";
 char _ftoaBuffer[100];
@@ -195,6 +247,7 @@ void setup()
     flashLED(1,2000);
     delay(2000);
 
+#ifdef ENABLE_CONNECTOR_ROS
     // --- Init ROS Communication
     // Wait ROS Agent
     set_microros_serial_transports(Serial);
@@ -250,9 +303,30 @@ void setup()
     log(1,"   Motor4 connected");
     log(1,"   --- END init Motor ---");
     log(1,"=== END setup  ===");
+#else
+    // --- Branche trames binaires : init IMU brute (MPU6050) + moteurs (HAT I2C),
+    //     puis demarrage de la couche SerialFrame. Pas d'agent micro-ROS a joindre.
+    while(!imuAtt.begin()) {
+       flashLED(3,120);
+       delay(2000);
+    }
+    motor1_controller.initialize();
+    motor2_controller.initialize();
+    motor3_controller.initialize();
+    motor4_controller.initialize();
+
+    sf.begin(controlTick, onTwist, onPid);
+    sf.setCarType(0x04); // 0x04 = FOURWHEEL cote hote
+    // Geometrie roue (placeholders a calibrer) : cf. bamboov200_config.h.
+    sf.setWheelGeom((uint16_t)COUNTS_PER_REV1,
+                    (float)(WHEEL_DIAMETER * PI * 1000.0),        // circonference en mm
+                    (float)(LR_WHEELS_DISTANCE * 0.5 * 1000.0));  // demi-voie en mm
+    flashLED(2,120);
+#endif
 }
 
 void loop() {
+#ifdef ENABLE_CONNECTOR_ROS
     digitalWrite(LED_PIN, LOW);
     switch (state)
     {
@@ -281,8 +355,13 @@ void loop() {
         default:
             break;
     }
+#else
+    // Branche trames binaires : vide Serial -> parseByte + tick de controle ~10 Hz.
+    sf.poll();
+#endif
    }
 
+#ifdef ENABLE_CONNECTOR_ROS
 void controlCallback(rcl_timer_t * timer, int64_t last_call_time)
 {
     RCLC_UNUSED(last_call_time);
@@ -299,6 +378,34 @@ void twistCallback(const void * msgin)
 
     prev_cmd_time = millis();
 }
+#else
+// --- Branche trames binaires : callbacks plats appeles par SerialFrame ---
+// Tick de controle ~10 Hz (declenche par SerialFrame::poll) : asservit + auto-emet.
+void controlTick()
+{
+    moveBase();
+    publishData();
+}
+
+// cmd_vel recue (0x12) : renseigne le shim twist + arme le fail-safe 200 ms de moveBase().
+void onTwist(float vx, float vy, float wz)
+{
+    twist_msg.linear.x  = vx;
+    twist_msg.linear.y  = vy;
+    twist_msg.angular.z = wz;
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    prev_cmd_time = millis();
+}
+
+// nouveaux gains PID moteur (0x13) : appliques aux 4 controleurs.
+void onPid(float kp_, float ki_, float kd_)
+{
+    motor1_pid.updateConstants(kp_, ki_, kd_);
+    motor2_pid.updateConstants(kp_, ki_, kd_);
+    motor3_pid.updateConstants(kp_, ki_, kd_);
+    motor4_pid.updateConstants(kp_, ki_, kd_);
+}
+#endif
 
 
 #ifdef ENABLE_PARAMETER
@@ -327,6 +434,7 @@ bool paramCallback(const Parameter * old_param, const Parameter * new_param, voi
 }
 #endif
 
+#ifdef ENABLE_CONNECTOR_ROS
 bool createEntities()
 {
     //allocator = rcl_get_default_allocator();
@@ -530,6 +638,7 @@ bool destroyEntities()
 
     return true;
 }
+#endif // ENABLE_CONNECTOR_ROS
 
 void fullStop() {
     twist_msg.linear.x = 0.0;
@@ -647,12 +756,21 @@ void moveBase()
   unsigned long now = millis();
   float vel_dt = (now - prev_odom_update) / 1000.0;
   prev_odom_update = now;
+#ifdef ENABLE_CONNECTOR_ROS
   odometry.update(
       vel_dt,
       current_vel.linear_x,
       current_vel.linear_y,
       current_vel.angular_z
   );
+#else
+  // Branche trames : pas d'objet Odometry (tire *_msgs) -> on cache la vitesse
+  // mesuree pour la trame 0x0A (emitSpeed). L'integration de pose est faite cote hote.
+  (void)vel_dt;
+  g_vx = current_vel.linear_x;
+  g_vy = current_vel.linear_y;
+  g_wz = current_vel.angular_z;
+#endif
 }
 
 bool isPublishJointState=false;
@@ -664,6 +782,7 @@ int ReqStateVelocity[NR_OF_JOINTS];
 int ReqStatePosition[NR_OF_JOINTS];
 void publishData()
 {
+#ifdef ENABLE_CONNECTOR_ROS
     // get current time
     struct timespec time_stamp = getTime();
 
@@ -733,6 +852,25 @@ void publishData()
     if (isPublish){
        digitalWrite(LED_PIN, HIGH);
     }
+#else
+    // --- Branche trames binaires : auto-emission des metriques ---
+    // 0x0A : vitesse mesuree + batterie (pas de mesure batterie sur ce banc -> 0).
+    sf.emitSpeed(g_vx, g_vy, g_wz, 0);
+
+    // 0x0C : attitude IMU (filtre complementaire ; yaw RELATIF -- pas de magneto).
+    float roll, pitch, yaw;
+    imuAtt.read(roll, pitch, yaw);
+    sf.emitImu(roll, pitch, yaw);
+
+    // 0x0D : comptage encodeurs quadrature REELS M1..M4 (odometrie complete cote hote).
+    int32_t enc[4] = {
+        (int32_t)motor1_encoder.read(),
+        (int32_t)motor2_encoder.read(),
+        (int32_t)motor3_encoder.read(),
+        (int32_t)motor4_encoder.read()
+    };
+    sf.emitEncoders(enc);
+#endif
 }
 
 void stop()
@@ -777,6 +915,7 @@ void logEncoder(){
    }
 }
 
+#ifdef ENABLE_CONNECTOR_ROS
 void syncTime()
 {
     // get the current time from the agent
@@ -807,6 +946,7 @@ void rclErrorLoop(rcl_ret_t ret)
         //log(1,"error rcl %d",(long)ret);
     }
 }
+#endif // ENABLE_CONNECTOR_ROS
 
 void flashLED(int n_times,int pause)
 {
@@ -824,6 +964,11 @@ char* string2char(String command){
         return p;
     }
 }
+#ifndef ENABLE_CONNECTOR_ROS
+// Branche trames binaires : log() est un NO-OP. Tout texte ecrit sur Serial
+// corromprait le flux de trames binaires ([0xFF][ID][LEN]...) lu par l'hote.
+void log(int, char*) {}
+#else
 void log(int pLevel, char *pMessage){
 
    if (isLogInit){
@@ -858,4 +1003,5 @@ void log(int pLevel, char *pMessage){
 //   else
 //      strcpy( logBuffer, pMessage);
 }
+#endif // ENABLE_CONNECTOR_ROS
 
