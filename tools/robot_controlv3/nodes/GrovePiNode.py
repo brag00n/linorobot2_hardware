@@ -20,9 +20,9 @@ from ..msgs import GrovePiTelemetry
 class GrovePiNode(Node):
     """Publie l'etat de la carte capteurs GrovePi+ sur /grovepi/telemetry."""
 
-    def __init__(self, port="COM6", baud=115200, telemetry=None):
+    def __init__(self, port="COM6", baud=115200, telemetry=None, vid_pid=None):
         super().__init__("grovepi")
-        self.link = GroveComSerial(port, baud, telemetry=telemetry)
+        self.link = GroveComSerial(port, baud, telemetry=telemetry, vid_pid=vid_pid)
         self._out = self.create_output("/grovepi/telemetry", GrovePiTelemetry)
 
     def process(self):

@@ -53,7 +53,9 @@ from robot_control.RobotMain import (
 CMDVEL_PERIOD_S = 0.1
 from robot_control.lib.Telemetry import Telemetry
 from robot_control.version import APP_VERSION
-from robot_control.communication.RobotComSerial import RobotComSerial
+from robot_control.communication.RobotComSerial import RobotComSerial, DEFAULT_CPR
+from robot_control.communication.Esp32ComSerial import (
+    Esp32ComSerial, ESP32_DEFAULT_CPR, ESP32_DEFAULT_BAUD, ESP32_VID_PID)
 from robot_control.device.motion.RobotMotorDrive import RobotMotorDrive
 from robot_control.modules.tracking.RobotWebCamMotorized import PREDICT_MODES
 from robot_control.mcp import gateway
@@ -61,10 +63,10 @@ from robot_control.mcp import gateway
 from .roslite import Executor
 from .metrics import MetricsConfig
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
-                    FaceRecogNode, FaceTrainNode)
+                    WSEsp32Node, FaceRecogNode, FaceTrainNode)
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
-                   ServoState, GrovePiTelemetry, RecognitionConfig, RecognitionResult,
-                   TrainState)
+                   ServoState, GrovePiTelemetry, Esp32Telemetry, RecognitionConfig,
+                   RecognitionResult, TrainState)
 
 
 # ===========================================================================
@@ -317,6 +319,49 @@ def _draw_rpm_bars(frame, x, y, rpm):
             else:
                 cv2.rectangle(frame, (cxb - fl, top), (cxb, bot), col, -1)
         _put(frame, bx + bw + 8, ry, "%+5.0f" % v, _C_VAL, 0.42, 1)
+
+
+def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
+    """Carte WSESP32 (carte de controle ESP32 WaveShare) : vitesses mesurees +
+    batterie + IMU (roll/pitch/yaw) + vitesses de rotation moteurs (barres bipolaires).
+
+    Calquee sur _draw_stm_card mais SANS bloc servo (servo ST3215 bus serie hors
+    perimetre) : la carte est un pur emetteur de telemetrie cote app (le pilotage
+    passe par cmd_vel). `es` = message Esp32Telemetry (None si node absent). Chaque
+    sous-bloc est gate par son groupe de metriques (cible HMI)."""
+    present = bool(es is not None and es.connected)
+    fresh = bool(present and es.speed_age is not None and es.speed_age < 1.5)
+    port = f"{port_name} {'OK' if (present and es.ok) else '--'}" if present else "absente"
+    yc = _card_frame(frame, x, y, 320, 190, "WSESP32", port, present, fresh)
+
+    def _ang(v):
+        return f"{v:+6.1f}" if v is not None else "    --"
+
+    if _hmi(mcfg, "esp32_motor"):
+        # vitesses mesurees (odometrie carte) : Vx m/s, Vz rad/s (Vy nul en differentiel)
+        vx = es.vx if present else 0.0
+        vz = es.vz if present else 0.0
+        vcol = _C_ON if (present and (vx or vz)) else _C_OFF
+        _row(frame, x, yc, [
+            (10, "vitesse", _C_LABEL), (98, f"{vx:+.2f}m/s", vcol),
+            (185, "wz", _C_LABEL), (222, f"{vz:+.2f}r/s", vcol)])
+    if _hmi(mcfg, "esp32_batt"):
+        batt = f"{es.battery:.1f}V" if (present and es.battery is not None) else "--"
+        okbad = f"{es.ok}/{es.bad}" if present else "--"
+        _row(frame, x, yc + 19, [
+            (10, "batt", _C_LABEL), (98, batt, _C_VAL),
+            (170, "trames", _C_LABEL), (258, okbad, _C_LABEL)])
+    if _hmi(mcfg, "esp32_imu"):
+        r = es.roll if present else None
+        p = es.pitch if present else None
+        yw = es.yaw if present else None
+        _row(frame, x, yc + 38, [
+            (10, "IMU roll", _C_LABEL), (95, _ang(r), _C_IMU),
+            (170, "pitch", _C_LABEL), (228, _ang(p), _C_IMU)])
+        _row(frame, x, yc + 57, [
+            (10, "    yaw", _C_LABEL), (95, _ang(yw), _C_IMU)])
+    if _hmi(mcfg, "esp32_rpm"):
+        _draw_rpm_bars(frame, x + 10, yc + 74, es.rpm if present else None)
 
 
 def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
@@ -611,20 +656,45 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
 
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
-                    key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None):
-    """Dispose les 3 cartes materielles aux coins + la matrice de boutons (bas-gauche).
+                    key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None,
+                    es=None, esp32_port=None):
+    """Dispose la carte CAM (haut-gauche), la PILE de cartes materielles (colonne
+    droite) et la matrice de boutons (bas-gauche).
 
-    CAM haut-gauche, STM32 haut-droit, GROVE bas-DROIT (le bas-gauche accueille la
-    matrice de boutons). Positions/tailles FIXES : chaque carte reste a son coin que
-    son materiel soit present ou non (cadre grise + « -- »), rien ne se deplace.
+    La colonne droite est PILOTEE PAR L'ETAT (exigence : « afficher toutes les cartes
+    connectees ») : on empile de haut en bas une carte par carte de CONTROLE configuree
+    -- STM32 (`port_name`) puis ESP32 WaveShare (`esp32_port`) -- puis la carte capteurs
+    GROVE dessous. Sur un robot mono-carte, seule sa carte de controle + GROVE
+    apparaissent (comportement historique : STM32 en haut-droit, GROVE en bas-droit) ;
+    sur un banc STM32+ESP32, les DEUX cartes de controle s'affichent, GROVE sous la pile.
+    Chaque carte garde sa gestion present/absent (cadre grise + « -- »).
     `key_flash` = index de boutons a eclairer (touches recemment pressees)."""
     fw, fh = frame.shape[1], frame.shape[0]
-    m = 8
+    m, gap = 8, 8
+    rx = fw - 320 - m
     _draw_cam_card(frame, m, m, cam_ok, camnode, active, met, n_faces, p1_fps,
                    tstate, mcfg=mcfg)
-    _draw_stm_card(frame, fw - 320 - m, m, link.connected, port_name, snap, pt,
-                   motion_on, smooth, mcfg=mcfg, cmdvel=cmdvel)
-    _draw_grove_card(frame, fw - 320 - m, fh - 176 - 16, gp_port, gp, mcfg=mcfg)
+
+    # --- pile des cartes de controle (colonne droite, de haut en bas) ---
+    y = m
+    controls = 0
+    if port_name is not None:                     # carte STM32 configuree
+        _draw_stm_card(frame, rx, y, bool(link and link.connected), port_name, snap,
+                       pt, motion_on, smooth, mcfg=mcfg, cmdvel=cmdvel)
+        y += 212 + gap
+        controls += 1
+    if esp32_port is not None:                    # carte de controle ESP32 WaveShare
+        _draw_wsesp32_card(frame, rx, y, esp32_port, es, mcfg=mcfg)
+        y += 190 + gap
+        controls += 1
+
+    # GROVE : ancree en bas-droit (historique) sur robot mono-carte ; placee SOUS la
+    # pile de controle sur un banc multi-cartes pour ne pas chevaucher.
+    grove_y = fh - 176 - 16
+    if controls >= 2:
+        grove_y = max(grove_y, y)
+    _draw_grove_card(frame, rx, grove_y, gp_port, gp, mcfg=mcfg)
+
     _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
                       getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
 
@@ -663,6 +733,10 @@ class RobotControlCore:
         self.motion = None
         self.executor = None
         self.camera = self.tracking = self.servo = self.board = None
+        self.stm32_link = None                   # lien STM32 pour la carte HUD (ou None)
+        self.stm32_port = None                   # port STM32 pour l'etiquette carte HUD (ou None)
+        self.wsesp32 = None                      # node carte de controle ESP32 WaveShare (optionnel)
+        self.esp32_port = None                   # port ESP32 pour l'etiquette carte HUD (ou None)
         self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
         self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.train = None                        # node dedie a l'apprentissage (optionnel)
@@ -699,27 +773,73 @@ class RobotControlCore:
                              max_bytes=int(max(1.0, args.log_budget_mb) * 1_000_000 / 2),
                              version=APP_VERSION)
         self.tel.log("event", msg="start", app="v3", version=APP_VERSION,
+                     robot=getattr(args, "robot", None),
                      motion=self.motion_on, port=args.port,
                      index=str(args.index), backend=args.backend, size=args.size,
                      pan_gain=args.pan_gain, tilt_gain=args.tilt_gain,
                      deadzone=args.deadzone, dead_hyst=args.dead_hyst, max_step=args.max_step,
                      invert_pan=args.invert_pan, invert_tilt=args.invert_tilt)
 
-        # 2) liaison serie STM32 (partagee : BoardNode + ServoNode + moteurs Core)
-        self.link = RobotComSerial(args.port, args.baud, telemetry=self.tel)
-        time.sleep(0.3)                          # laisse le thread lecteur s'ouvrir
+        # 2) cartes de controle (profil robot) : la carte PRINCIPALE (1re activee)
+        #    porte le lien PARTAGE self.link (moteurs + servos + gateway MCP) ; les
+        #    cartes secondaires (banc STM32+ESP32 branches ensemble) ont leur propre
+        #    node autonome. BoardNode = STM32, WSEsp32Node = ESP32 WaveShare.
+        controls = getattr(args, "controls", None) or [
+            {"kind": "stm32", "port": args.port, "baud": args.baud,
+             "cpr": None, "vid_pid": None, "enabled": True}]
+        enabled = [c for c in controls if c.get("enabled", True)]
+        primary = enabled[0] if enabled else None
+        control_nodes = []
+        for c in enabled:
+            is_primary = c is primary
+            if c["kind"] == "stm32":
+                link = RobotComSerial(c["port"], c["baud"], telemetry=self.tel,
+                                      cpr=c.get("cpr") or DEFAULT_CPR,
+                                      vid_pid=c.get("vid_pid"))
+                node = BoardNode(link)
+                self.board = node
+                self.stm32_link = link
+                self.stm32_port = c["port"]
+                if is_primary:
+                    self.link = link
+            elif c["kind"] == "esp32":
+                self.esp32_port = c["port"]
+                if is_primary:
+                    # ESP32 = carte principale : le Core POSSEDE le lien (le node le
+                    # recoit injecte, comme BoardNode ; ferme par le Core au shutdown).
+                    link = Esp32ComSerial(
+                        c["port"], c.get("baud") or ESP32_DEFAULT_BAUD,
+                        telemetry=self.tel, cpr=c.get("cpr") or ESP32_DEFAULT_CPR,
+                        vid_pid=c.get("vid_pid") or ESP32_VID_PID)
+                    node = WSEsp32Node(link=link)
+                    self.link = link
+                else:
+                    # carte secondaire : le node possede/ferme son propre lien.
+                    node = WSEsp32Node(port=c["port"],
+                                       baud=c.get("baud") or ESP32_DEFAULT_BAUD,
+                                       telemetry=self.tel, cpr=c.get("cpr"))
+                self.wsesp32 = node
+            else:
+                continue
+            control_nodes.append(node)
+        time.sleep(0.3)                          # laisse le(s) thread(s) lecteur s'ouvrir
         self.motion = RobotMotorDrive(self.link, maxPwm=args.max_pwm)
 
-        # 3) nodes + executeur : en --board-only, seul BoardNode (ni cam ni suivi)
-        #    La carte capteurs GrovePi+ (ultrasons + IMU) est optionnelle et
-        #    tolerante a l'absence (reconnexion auto) : on l'ajoute sauf --no-grovepi.
-        self.board = BoardNode(self.link)
+        # 3) carte capteurs GrovePi+ (ultrasons + IMU) : optionnelle, tolerante a
+        #    l'absence (reconnexion auto). Port/baud issus du profil (args.sensors) :
+        #    NE PAS reutiliser args.baud (= baud carte de controle, 921600 en ESP32).
+        sensors = getattr(args, "sensors", None)
+        if sensors and sensors.get("enabled", True):
+            self.grovepi = GrovePiNode(port=sensors.get("port"),
+                                       baud=sensors.get("baud", 115200),
+                                       telemetry=self.tel,
+                                       vid_pid=sensors.get("vid_pid"))
+
+        # 4) nodes + executeur : en --board-only, seules les cartes (ni cam ni suivi)
         self.executor = Executor()
-        if not args.no_grovepi:
-            self.grovepi = GrovePiNode(port=args.grovepi_port, baud=args.baud,
-                                       telemetry=self.tel)
         if self.board_only:
-            self.executor.add_node(self.board)
+            for node in control_nodes:
+                self.executor.add_node(node)
             if self.grovepi is not None:
                 self.executor.add_node(self.grovepi)
         else:
@@ -729,9 +849,10 @@ class RobotControlCore:
             self.recognition = FaceRecogNode(args, telemetry=self.tel)
             # apprentissage : node DEDIE (worker unique) -> /recognition/train_state
             self.train = FaceTrainNode(args, telemetry=self.tel)
+            # servos camera pan/tilt : sur la carte de controle principale (self.link).
             self.servo = ServoNode(args, self.link, telemetry=self.tel)
             nodes = [self.camera, self.tracking, self.recognition, self.train,
-                     self.servo, self.board]
+                     self.servo] + control_nodes
             if self.grovepi is not None:
                 nodes.append(self.grovepi)
             for node in nodes:
@@ -747,7 +868,8 @@ class RobotControlCore:
         self.server = gateway.CommandServer(
             on_config=self._apply_config, link=self.link, motion=self.motion,
             cpr=self.link.cpr or 1320.0, host=host, port=port).start()
-        print(f"Carte : {args.port} @ {args.baud}  |  "
+        label = getattr(args, "robot_label", None) or getattr(args, "robot", "")
+        print(f"Robot : {label}  |  carte {args.port} @ {args.baud}  |  "
               f"moteurs {'ACTIFS' if self.motion_on else 'desactives'}")
         if self.board_only:
             print("Mode board-only : ni camera ni suivi (pur pilote COM4 pour le MCP).")
@@ -1067,6 +1189,7 @@ class RobotControlCore:
             sstate = self.executor.latest("/servo/state") or ServoState(deadzone=self.args.deadzone)
             board = self.executor.latest("/board/telemetry")
             gp = self.executor.latest("/grovepi/telemetry")
+            es = self.executor.latest("/wsesp32/telemetry")
             recog = self.executor.latest("/recognition/result")
 
             # 4) cadence d'affichage
@@ -1117,12 +1240,13 @@ class RobotControlCore:
                 self._train_done_t = 0.0
             elif tr is not None and tr.summary is not None and self._train_done_t == 0.0:
                 self._train_done_t = now               # 1er tick apres la fin du batch
-            _draw_hud_cards(frame, cam_ok, self.camera, self.link, self.args.port,
+            _draw_hud_cards(frame, cam_ok, self.camera, self.stm32_link, self.stm32_port,
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
                             self.disp_fps, tstate, gp, key_flash=flash, btn_accent=accent,
                             mcfg=self.mcfg, speed=self.motion.speedLevel,
-                            cmdvel=(self.motion.lin, self.motion.ang))
+                            cmdvel=(self.motion.lin, self.motion.ang),
+                            es=es, esp32_port=self.esp32_port)
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge

@@ -12,6 +12,7 @@ Graphe des topics (voir RobotMain) :
   /servo/cmd         ServoCmd        Tracking + Core -> Servo  (cible ou pilotage manuel)
   /servo/state       ServoState      Servo   -> Core          (angles + fluidite)
   /board/telemetry   BoardTelemetry  Board   -> Core          (batterie, yaw, liaison)
+  /wsesp32/telemetry Esp32Telemetry  WSEsp32 -> Core          (carte ESP32 WaveShare, meme protocole)
   /grovepi/telemetry GrovePiTelemetry GrovePi -> Core          (ultrasons + IMU, liaison)
 """
 from dataclasses import dataclass, field
@@ -162,6 +163,35 @@ class BoardTelemetry:
     # Timestamps horloge interne carte (ms, u32) prefixes des trames de metriques
     # (convention carte GrovePi) ; *_age = fraicheur cote hote (s depuis la derniere
     # trame de la famille, None si jamais recue) -- cf GrovePiTelemetry.
+    ts_speed: Optional[int] = None
+    ts_imu: Optional[int] = None
+    ts_enc: Optional[int] = None
+    speed_age: Optional[float] = None
+    imu_age: Optional[float] = None
+    enc_age: Optional[float] = None
+    ok: int = 0
+    bad: int = 0
+
+
+@dataclass
+class Esp32Telemetry:
+    """Snapshot carte de controle ESP32 WaveShare (bamboo4WD_V4_WSEsp32).
+
+    Miroir exact de BoardTelemetry : la carte ESP32 parle le MEME protocole de
+    trames binaires que la STM32 (funcodes 0x0A/0x0C/0x0D identiques), seule la
+    carte physique change (Esp32ComSerial). `connected` reflete l'etat du port
+    (la carte peut etre absente au demarrage : l'app tourne quand meme et
+    l'affiche des qu'elle apparait).
+    """
+    connected: bool = False
+    battery: Optional[float] = None
+    yaw: Optional[float] = None
+    roll: Optional[float] = None
+    pitch: Optional[float] = None
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
+    rpm: Optional[list] = None
     ts_speed: Optional[int] = None
     ts_imu: Optional[int] = None
     ts_enc: Optional[int] = None
