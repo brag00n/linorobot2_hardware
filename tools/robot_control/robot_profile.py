@@ -76,6 +76,9 @@ def resolve(args):
             "baud": c.get("baud", 115200),
             "cpr": c.get("cpr"),
             "vid_pid": c.get("vid_pid"),
+            # protocole de fil : "yahboom" (defaut, trames binaires) ou "mavlink".
+            # L'ancien COM reste toujours disponible via ce champ (surcharge --protocol).
+            "protocol": c.get("protocol", "yahboom"),
             "enabled": True,
         }
         if kind == "stm32":
@@ -93,6 +96,10 @@ def resolve(args):
                 entry["port"] = args.teensy_port
             if getattr(args, "no_teensy", False):
                 entry["enabled"] = False
+        # Surcharge CLI globale du protocole de fil (--protocol yahboom|mavlink),
+        # appliquee a TOUTES les cartes ; sinon la valeur du profil par carte.
+        if getattr(args, "protocol", None):
+            entry["protocol"] = args.protocol
         controls.append(entry)
     args.controls = controls
 
@@ -117,6 +124,7 @@ def resolve(args):
     if primary:
         args.port = primary["port"]
         args.baud = primary["baud"]
+        args.protocol = primary["protocol"]   # seam legacy (robot_control mono-carte)
     if sensors:
         args.grovepi_port = sensors["port"]
     return args

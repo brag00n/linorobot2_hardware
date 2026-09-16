@@ -112,6 +112,11 @@ def parse_args():
                          "scan auto PJRC 16C0:0483 si absent)")
     ap.add_argument("--no-teensy", action="store_true",
                     help="ne pas connecter la 3e carte de controle Teensy (robot_controlv3)")
+    # --- protocole de fil des cartes de controle (defaut : valeur du PROFIL) ---
+    ap.add_argument("--protocol", default=None, choices=["yahboom", "mavlink"],
+                    help="protocole de fil des cartes de controle : yahboom (trames "
+                         "binaires maison, historique) ou mavlink (v2, dialecte bamboo). "
+                         "Defaut : valeur du profil (yahboom). Surcharge TOUTES les cartes.")
     # --- carte capteurs GrovePi+ (utilisee par robot_controlv3 ; ignoree ici) ---
     ap.add_argument("--grovepi-port", default=None,
                     help="port serie carte capteurs GrovePi+ (defaut : profil, COM6 ; "
@@ -543,7 +548,8 @@ class RobotControlApp:
                      invert_pan=args.invert_pan, invert_tilt=args.invert_tilt)
 
         # 2) liaison serie STM32 + moteurs (toujours : coeur du pilotage carte)
-        self.link = RobotComSerial(args.port, args.baud, telemetry=self.tel)
+        self.link = RobotComSerial(args.port, args.baud, telemetry=self.tel,
+                                   protocol=getattr(args, "protocol", None) or "yahboom")
         time.sleep(0.3)                          # laisse le thread lecteur s'ouvrir
         self.motion = RobotMotorDrive(self.link, maxPwm=args.max_pwm)
 

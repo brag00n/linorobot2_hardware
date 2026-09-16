@@ -52,6 +52,8 @@ STM32_TOOLS = os.path.join(STM32_ROOT, "tools")
 PORT = os.environ.get("BAMBOU_PORT", "COM4")
 BAUD = int(os.environ.get("BAMBOU_BAUD", "115200"))
 CPR = float(os.environ.get("BAMBOU_CPR", "1320"))
+# Protocole de fil du repli COM direct : yahboom (defaut) ou mavlink (BAMBOU_PROTOCOL).
+PROTOCOL = os.environ.get("BAMBOU_PROTOCOL", "yahboom")
 
 DETECTORS = ("haar", "dnn", "yunet")
 
@@ -66,7 +68,7 @@ def _addr():
 def _direct_exec(cmd, args):
     """Ouvre COM4 le temps d'une commande, l'execute, referme (rend le port a
     l'app des qu'elle demarre). handle_command n'utilise pas `motion` -> None."""
-    link = RobotComSerial(PORT, BAUD, cpr=CPR)
+    link = RobotComSerial(PORT, BAUD, cpr=CPR, protocol=PROTOCOL)
     try:
         time.sleep(0.4)                       # laisse le thread lecteur ouvrir + capter
         return gateway.handle_command(cmd, args, link, None, link.cpr or CPR)
@@ -166,7 +168,7 @@ def t_enter_bootloader(args):
         return ("L'app tient COM4 (socket %s:%s joignable) : arretez-la d'abord. "
                 "Le passage en bootloader redemarre le MCU et exige le port en "
                 "exclusif." % (host, port))
-    link = RobotComSerial(PORT, BAUD, cpr=CPR)
+    link = RobotComSerial(PORT, BAUD, cpr=CPR, protocol=PROTOCOL)
     time.sleep(0.4)
     if not link.connected:
         link.close()

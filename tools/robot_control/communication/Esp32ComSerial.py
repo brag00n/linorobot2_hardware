@@ -25,9 +25,11 @@ import time
 import serial
 
 try:
-    from .RobotComSerial import RobotComSerial, FrameParser   # importe en tant que package
+    from .RobotComSerial import RobotComSerial      # importe en tant que package
+    from .wirecodec import make_codec
 except ImportError:                              # importe a plat (dossier sur sys.path)
-    from RobotComSerial import RobotComSerial, FrameParser
+    from RobotComSerial import RobotComSerial
+    from wirecodec import make_codec
 
 # Defauts specifiques a la carte ESP32 WaveShare
 ESP32_DEFAULT_BAUD = 921600           # UART du firmware esp32_bamboo (monitor_speed)
@@ -43,12 +45,14 @@ class Esp32ComSerial(RobotComSerial):
     """
 
     def __init__(self, port="COM8", baud=ESP32_DEFAULT_BAUD, telemetry=None,
-                 cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID, rx_prefix=""):
+                 cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID, rx_prefix="",
+                 protocol="yahboom", **codec_kwargs):
         super().__init__(port=port, baud=baud, telemetry=telemetry, cpr=cpr,
-                         vid_pid=vid_pid, rx_prefix=rx_prefix)
+                         vid_pid=vid_pid, rx_prefix=rx_prefix, protocol=protocol,
+                         **codec_kwargs)
 
     def _probe(self, port, timeout=2.5):
-        """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames 0xFB.
+        """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames du protocole actif.
 
         /!\ Difference critique avec la STM32 (CH340) : sur les CP210x de la carte
         WaveShare, DTR et RTS sont cables aux broches EN (reset) et GPIO0 (boot) de
@@ -57,7 +61,9 @@ class Esp32ComSerial(RobotComSerial):
         parasites (0x80/0x00), jamais de trame valide. On construit donc le port
         SANS l'ouvrir, on force dtr=rts=False, puis .open() : l'ESP32 tourne (ou
         redemarre proprement une seule fois). Timeout allonge (2.5 s) pour couvrir
-        un eventuel reboot (~1.5 s) + quelques trames avant de valider.
+        un eventuel reboot (~1.5 s) + quelques trames avant de valider. Le comptage
+        passe par un codec NEUF du protocole actif (et capte le sysid en MAVLink),
+        comme la classe de base.
         """
         try:
             s = serial.Serial()
@@ -69,22 +75,27 @@ class Esp32ComSerial(RobotComSerial):
             s.open()
         except Exception:
             return 0, None
-        parser = FrameParser()
+        codec = make_codec(self.protocol, **self._codec_kwargs)
         ok = 0
+        sysid = None
         t0 = time.time()
         try:
             while time.time() - t0 < timeout:
                 chunk = s.read(256)
                 if not chunk:
                     continue
-                for _func, _data, good, _raw in parser.feed(chunk):
-                    if good:
-                        ok += 1
+                events, n_ok, _n_bad = codec.feed(chunk)
+                ok += n_ok
+                for kind, payload in events:
+                    if kind == "heartbeat":
+                        sysid = payload.get("sysid")
                 if ok >= 2:
                     break
         except Exception:
             pass
         if ok >= 2:
+            if sysid is not None:
+                self.rx_sysid = sysid
             return ok, s
         try:
             s.close()

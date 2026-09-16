@@ -875,7 +875,8 @@ class RobotControlCore:
             if c["kind"] == "stm32":
                 link = RobotComSerial(c["port"], c["baud"], telemetry=self.tel,
                                       cpr=c.get("cpr") or DEFAULT_CPR,
-                                      vid_pid=c.get("vid_pid"))
+                                      vid_pid=c.get("vid_pid"),
+                                      protocol=c.get("protocol", "yahboom"))
                 node = BoardNode(link)
                 self.board = node
                 self.stm32_link = link
@@ -890,7 +891,8 @@ class RobotControlCore:
                     link = Esp32ComSerial(
                         c["port"], c.get("baud") or ESP32_DEFAULT_BAUD,
                         telemetry=self.tel, cpr=c.get("cpr") or ESP32_DEFAULT_CPR,
-                        vid_pid=c.get("vid_pid") or ESP32_VID_PID)
+                        vid_pid=c.get("vid_pid") or ESP32_VID_PID,
+                        protocol=c.get("protocol", "yahboom"))
                     node = WSEsp32Node(link=link)
                     self.link = link
                 else:
@@ -899,7 +901,8 @@ class RobotControlCore:
                     node = WSEsp32Node(port=c["port"],
                                        baud=c.get("baud") or ESP32_DEFAULT_BAUD,
                                        telemetry=self.tel, cpr=c.get("cpr"),
-                                       rx_prefix="esp32_")
+                                       rx_prefix="esp32_",
+                                       protocol=c.get("protocol", "yahboom"))
                 self.wsesp32 = node
             elif c["kind"] == "teensy":
                 self.teensy_port = c["port"]
@@ -909,7 +912,8 @@ class RobotControlCore:
                     link = TeensyComSerial(
                         c["port"], c.get("baud") or TEENSY_DEFAULT_BAUD,
                         telemetry=self.tel, cpr=c.get("cpr") or TEENSY_DEFAULT_CPR,
-                        vid_pid=c.get("vid_pid") or TEENSY_VID_PID)
+                        vid_pid=c.get("vid_pid") or TEENSY_VID_PID,
+                        protocol=c.get("protocol", "yahboom"))
                     node = TeensyNode(link=link)
                     self.link = link
                 else:
@@ -918,7 +922,8 @@ class RobotControlCore:
                     node = TeensyNode(port=c["port"],
                                       baud=c.get("baud") or TEENSY_DEFAULT_BAUD,
                                       telemetry=self.tel, cpr=c.get("cpr"),
-                                      rx_prefix="teensy_")
+                                      rx_prefix="teensy_",
+                                      protocol=c.get("protocol", "yahboom"))
                 self.teensy = node
             else:
                 continue

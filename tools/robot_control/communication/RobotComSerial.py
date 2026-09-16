@@ -1,20 +1,25 @@
-r"""RobotComSerial - Liaison serie avec la carte STM32 du Bamboo v4.
+r"""RobotComSerial - Liaison serie avec la carte de controle du Bamboo v4.
 
 Portage de l'ancien board_link.BoardLink vers le style Bambou4WD_python (classe
-RobotXxx, methodes camelCase). Comportement INCHANGE : ouvre COM4 (@115200), lit
-en continu les trames auto-report (thread lecteur) et expose l'envoi des trames
-de commande (moteurs, servos). Le protocole (trame [0xFF][0xFC][LEN][FUNC][...][CHK])
-et ses decodeurs sont REUTILISES tels quels depuis
-firmware/stm32_bamboo/tools/ros_monitor.py (source unique du protocole).
+RobotXxx, methodes camelCase). Ouvre le port (@115200 par defaut), lit en continu
+la telemetrie auto-emise (thread lecteur) et expose l'envoi des commandes
+(moteurs, servos, cmd_vel, parametres).
+
+Le PROTOCOLE DE FIL est enfichable via le parametre `protocol` (cf. wirecodec) :
+  - "yahboom" (DEFAUT) : trames binaires maison, decodeurs reutilises depuis
+    firmware/stm32_bamboo/tools/ros_monitor.py (l'ancien COM reste toujours
+    disponible : choix de configuration, pas un remplacement) ;
+  - "mavlink" : MAVLink v2, dialecte `bamboo`, protocole cible commun aux 3 cartes.
+Cette classe ne connait plus le format du fil : elle delegue au codec le decodage
+(feed -> evenements normalises) et la construction des trames (builders -> bytes),
+et ne manipule que des evenements/etats independants du protocole.
 
 Modele : les ECRITURES se font dans le thread appelant, les LECTURES dans le
 thread lecteur -> pas de conflit read/write sur le handle.
 
-/!\ Un seul programme peut tenir COM4 a la fois : couper le serveur MCP avant.
+/!\ Un seul programme peut tenir le port a la fois : couper le serveur MCP avant.
 """
 import math
-import os
-import sys
 import threading
 import time
 from collections import deque
@@ -22,36 +27,7 @@ from collections import deque
 import serial
 from serial.tools import list_ports
 
-# --- Pont vers le protocole partage (firmware/stm32_bamboo/tools) --------------
-# Ce module est dans <repo>/tools/robot_control/communication/ ; le protocole STM32
-# vit sous <repo>/firmware/stm32_bamboo/tools -> remonter de 3 niveaux.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_STM32_TOOLS = os.path.normpath(
-    os.path.join(_HERE, "..", "..", "..", "firmware", "stm32_bamboo", "tools"))
-if _STM32_TOOLS not in sys.path:
-    sys.path.insert(0, _STM32_TOOLS)
-
-from ros_monitor import (  # noqa: E402  (import apres modif sys.path)
-    build_frame, FrameParser, u32,
-    decode_speed, decode_imu_att, decode_encoder,
-    decode_pid, decode_wheel_geom, CAR_TYPE_CPR,
-    FUNC_REQUEST_DATA, FUNC_CAR_TYPE, FUNC_SET_WHEEL_GEOM,
-    FUNC_SET_MOTOR_PID, FUNC_SET_YAW_PID,
-)
-
-# Codes fonction des commandes (miroir de ros_mcp_server.py)
-FUNC_MOTOR = 0x10             # [m1 m2 m3 m4] int8 signe (% PWM) : PWM brut, boucle ouverte
-FUNC_MOTION = 0x12            # [parm, Vx, Vy, Vz] int16 LE : consigne vitesse (kinematics + PID carte)
-FUNC_PWM_SERVO = 0x03         # [id_1based(1..4), angle(0..180)]
-FUNC_PWM_SERVO_ALL = 0x04     # [s1 s2 s3 s4] 4 angles d'un coup
-FUNC_ENTER_BOOTLOADER = 0xA3  # saut vers le bootloader ROM (flash sans BOOT0)
-SAVE_VERIFY = 0x5F            # octet de garde : ecrit en flash si egal, sinon RAM
-
-# Codes fonction auto-report (miroir de ros_monitor.py)
-REPORT_SPEED = 0x0A        # Vx,Vy,Vz + batterie
-REPORT_MAG = 0x0B          # mx,my,mz champ magnetique (extension ESP32 WaveShare)
-REPORT_IMU_ATT = 0x0C      # roll, pitch, yaw
-REPORT_ENCODER = 0x0D      # M1..M4 comptage cumulatif
+from .wirecodec import make_codec, CAR_TYPE_CPR
 
 DEFAULT_CPR = 1320.0       # tics/tour par defaut (Mecanum/4-roues 330RPM ; cf CAR_TYPE_CPR)
 
@@ -60,10 +36,14 @@ class RobotComSerial:
     """Liaison serie non bloquante avec la carte. Reconnexion automatique."""
 
     def __init__(self, port="COM4", baud=115200, telemetry=None, cpr=DEFAULT_CPR,
-                 vid_pid=None, rx_prefix=""):
+                 vid_pid=None, rx_prefix="", protocol="yahboom", **codec_kwargs):
         self.port = port
         self.baud = baud
         self.tel = telemetry
+        # Protocole de fil ("yahboom" par defaut, ou "mavlink") : selectionne le codec.
+        self.protocol = (protocol or "yahboom").lower()
+        self._codec_kwargs = codec_kwargs
+        self._codec = make_codec(self.protocol, **codec_kwargs)
         # Prefixe des sous-cles rx:<...> loggees (state.json/jsonl). "" = carte
         # PRINCIPALE (rx:speed/imu/encoder, lues telles quelles par le MCP status) ;
         # une carte SECONDAIRE du banc recoit "teensy_"/"esp32_" pour ne PAS ecraser
@@ -84,32 +64,34 @@ class RobotComSerial:
         self.yaw = None                # deg
         self.roll = self.pitch = None  # deg
         self.encoders = None           # [M1..M4]
-        # Champ magnetique (extension carte ESP32 WaveShare, trame 0x0B ; la STM32
+        # Champ magnetique (extension carte ESP32 WaveShare / BAMBOO_MAG ; la STM32
         # ne l'emet pas -> reste None). mag = (mx, my, mz) en uT ; heading = cap
         # boussole en degres [0..360[ derive de (mx, my).
         self.mag = None
         self.heading = None
         self.ok = 0
         self.bad = 0
+        # sysid MAVLink de la carte, capte au HEARTBEAT (None en yahboom / avant sync).
+        self.rx_sysid = None
 
-        # Timestamps horloge interne carte (ms, u32 LE) prefixes des trames de metriques
-        # (convention carte GrovePi) + heure de reception hote (pour le calcul d'age).
-        self.ts_speed = None           # ms carte (trame 0x0A vitesse+batterie)
-        self.ts_imu = None             # ms carte (trame 0x0C attitude)
-        self.ts_enc = None             # ms carte (trame 0x0D encodeurs)
-        self.ts_mag = None             # ms carte (trame 0x0B magneto, ESP32)
+        # Timestamps horloge interne carte (ms) prefixes des trames de metriques
+        # + heure de reception hote (pour le calcul d'age).
+        self.ts_speed = None           # ms carte (vitesse+batterie)
+        self.ts_imu = None             # ms carte (attitude)
+        self.ts_enc = None             # ms carte (encodeurs)
+        self.ts_mag = None             # ms carte (magneto)
         self.speed_t = 0.0             # time.time() de la derniere trame vitesse
         self.imu_t = 0.0               # time.time() de la derniere trame attitude
         self.enc_t = 0.0               # time.time() de la derniere trame encodeurs
         self.mag_t = 0.0               # time.time() de la derniere trame magneto
 
-        # Rapports requete/reponse (REQUEST_DATA 0x50 -> report) + horodatage :
+        # Rapports requete/reponse (getPid/getWheelGeom/getCarType) + horodatage :
         # une lecture ecrit la requete puis attend un horodatage plus recent.
         self.car_type = None           # octet type de chassis (0x01..0x06)
         self.car_type_t = 0.0
-        self.wheel_geom = None         # dict decode_wheel_geom
+        self.wheel_geom = None         # dict (shape decode_wheel_geom)
         self.wheel_geom_t = 0.0
-        self.pid = {}                  # index (1..5) -> (dict decode_pid, t)
+        self.pid = {}                  # index (1..5) -> (dict {index,kp,ki,kd}, t)
 
         # Historique encodeur (vitesse instantanee) + baseline de calibration
         self.enc_hist = deque(maxlen=600)   # (t, [M1..M4])
@@ -156,33 +138,39 @@ class RobotComSerial:
         return [p.device for p in infos]
 
     def _probe(self, port, timeout=0.8):
-        """Ouvre un port candidat et compte les trames Yahboom valides.
+        """Ouvre un port candidat et compte les trames valides du protocole actif.
 
         Le port de la carte auto-emet en continu : >=2 trames decodees en
-        <timeout> => c'est bien la carte. Retourne (nb_ok, handle_ouvert|None) ;
-        le handle n'est garde ouvert que si le port est identifie (deja
-        synchronise, pas de reouverture).
+        <timeout> => c'est bien la carte. Utilise un codec NEUF (etat de parsing
+        isole du thread lecteur) et, en MAVLink, capte le sysid du HEARTBEAT.
+        Retourne (nb_ok, handle_ouvert|None) ; le handle n'est garde ouvert que
+        si le port est identifie (deja synchronise, pas de reouverture).
         """
         try:
             s = serial.Serial(port, self.baud, timeout=0.1)
         except Exception:
             return 0, None
-        parser = FrameParser()
+        codec = make_codec(self.protocol, **self._codec_kwargs)
         ok = 0
+        sysid = None
         t0 = time.time()
         try:
             while time.time() - t0 < timeout:
                 chunk = s.read(128)
                 if not chunk:
                     continue
-                for _func, _data, good, _raw in parser.feed(chunk):
-                    if good:
-                        ok += 1
+                events, n_ok, _n_bad = codec.feed(chunk)
+                ok += n_ok
+                for kind, payload in events:
+                    if kind == "heartbeat":
+                        sysid = payload.get("sysid")
                 if ok >= 2:
                     break
         except Exception:
             pass
         if ok >= 2:
+            if sysid is not None:
+                self.rx_sysid = sysid
             return ok, s
         try:
             s.close()
@@ -201,7 +189,7 @@ class RobotComSerial:
         except Exception as e:                     # port occupe / absent / errone
             self.last_err = str(e)
             self.ser = None
-        # 2) scan auto : on cherche le port qui PARLE le protocole Yahboom.
+        # 2) scan auto : on cherche le port qui PARLE le protocole actif.
         for cand in self._candidates():
             ok, s = self._probe(cand)
             if s is not None:
@@ -216,7 +204,6 @@ class RobotComSerial:
             self.tel.log("event", msg="com_fail", err=self.last_err)
 
     def _readLoop(self):
-        parser = FrameParser()
         while not self._stop:
             if self.ser is None:
                 self._open()
@@ -231,68 +218,70 @@ class RobotComSerial:
                 continue
             if not chunk:
                 continue
-            for func, data, ok, _raw in parser.feed(chunk):
-                with self.lock:
-                    if not ok:
-                        self.bad += 1
-                        continue
-                    self.ok += 1
-                    self._apply(func, data)
+            events, n_ok, n_bad = self._codec.feed(chunk)
+            with self.lock:
+                self.ok += n_ok
+                self.bad += n_bad
+                for kind, payload in events:
+                    self._applyEvent(kind, payload)
 
-    def _apply(self, func, data):
-        """Met a jour l'etat a partir d'une trame decodee (sous verrou)."""
-        if func == REPORT_SPEED and len(data) >= 11:
-            d = decode_speed(data)
-            self.vx = d["Vx (mm/s)"]
-            self.vy = d["Vy (mm/s)"]
-            self.vz = d["Vz (rad/s)"]
-            self.battery = d["Batterie (V)"]
-            self.ts_speed = u32(data, 0)              # timestamp carte (ms)
+    def _applyEvent(self, kind, p):
+        """Met a jour l'etat a partir d'un evenement normalise (sous verrou).
+
+        Les evenements sont produits par le codec du protocole actif (independants
+        du format du fil) ; les sous-cles log_rx restent identiques a l'historique.
+        """
+        if kind == "speed":
+            self.vx = p["vx"]
+            self.vy = p["vy"]
+            self.vz = p["vz"]
+            # MAVLink separe la batterie (SYS_STATUS) de la vitesse -> None ici :
+            # ne pas ecraser la derniere tension connue.
+            if p.get("battery") is not None:
+                self.battery = p["battery"]
+            self.ts_speed = p.get("ts")
             self.speed_t = time.time()
             if self.tel:
                 self.tel.log_rx(self._rx_prefix + "speed", vx=self.vx, vy=self.vy,
                                 vz=self.vz, batt=self.battery)
-        elif func == REPORT_IMU_ATT and len(data) >= 10:
-            d = decode_imu_att(data)
-            self.roll = d["Roll (deg)"]
-            self.pitch = d["Pitch (deg)"]
-            self.yaw = d["Yaw (deg)"]
-            self.ts_imu = u32(data, 0)                # timestamp carte (ms)
+        elif kind == "battery":
+            self.battery = p["battery"]
+        elif kind == "imu":
+            self.roll = p["roll"]
+            self.pitch = p["pitch"]
+            self.yaw = p["yaw"]
+            self.ts_imu = p.get("ts")
             self.imu_t = time.time()
             if self.tel:
                 self.tel.log_rx(self._rx_prefix + "imu", roll=self.roll,
                                 pitch=self.pitch, yaw=self.yaw)
-        elif func == REPORT_MAG and len(data) >= 10:
-            # 0x0B (ESP32) : [ts u32][mx i16][my i16][mz i16] en 0.1 uT.
-            mx = int.from_bytes(data[4:6], "little", signed=True) / 10.0
-            my = int.from_bytes(data[6:8], "little", signed=True) / 10.0
-            mz = int.from_bytes(data[8:10], "little", signed=True) / 10.0
-            self.mag = (mx, my, mz)
-            # cap boussole (0 = +X, sens trigo) ramene dans [0..360[
-            self.heading = math.degrees(math.atan2(my, mx)) % 360.0
-            self.ts_mag = u32(data, 0)                # timestamp carte (ms)
+        elif kind == "mag":
+            self.mag = (p["mx"], p["my"], p["mz"])
+            self.heading = p["heading"]
+            self.ts_mag = p.get("ts")
             self.mag_t = time.time()
             if self.tel:
-                self.tel.log_rx(self._rx_prefix + "mag", mx=mx, my=my, mz=mz,
-                                heading=self.heading)
-        elif func == REPORT_ENCODER and len(data) >= 20:
-            d = decode_encoder(data)
-            self.encoders = [d[f"M{i + 1}"] for i in range(4)]
-            self.ts_enc = u32(data, 0)                # timestamp carte (ms)
+                self.tel.log_rx(self._rx_prefix + "mag", mx=p["mx"], my=p["my"],
+                                mz=p["mz"], heading=self.heading)
+        elif kind == "encoder":
+            self.encoders = list(p["m"])
+            self.ts_enc = p.get("ts")
             self.enc_t = time.time()
             self.enc_hist.append((time.time(), list(self.encoders)))
             if self.tel:
                 self.tel.log_rx(self._rx_prefix + "encoder", m=list(self.encoders))
         # --- rapports requete/reponse (lus par getCarType/getWheelGeom/getPid) ---
-        elif func == FUNC_CAR_TYPE and len(data) >= 1:
-            self.car_type = data[0]
+        elif kind == "car_type":
+            self.car_type = p["value"]
             self.car_type_t = time.time()
-        elif func == FUNC_SET_WHEEL_GEOM and len(data) >= 6:
-            self.wheel_geom = decode_wheel_geom(data)
+        elif kind == "wheel_geom":
+            self.wheel_geom = dict(p)
             self.wheel_geom_t = time.time()
-        elif func in (FUNC_SET_MOTOR_PID, FUNC_SET_YAW_PID) and len(data) >= 7:
-            pd = decode_pid(data)
-            self.pid[int(pd["index"])] = (pd, time.time())
+        elif kind == "pid":
+            self.pid[int(p["index"])] = (dict(p), time.time())
+        elif kind == "heartbeat":
+            # MAVLink seul : sert a la decouverte (sysid). Pas d'etat metrique.
+            self.rx_sysid = p.get("sysid")
 
     def _closeSer(self):
         if self.ser is not None:
@@ -309,7 +298,7 @@ class RobotComSerial:
 
     def snapshot(self):
         """Copie coherente des dernieres metriques (sous verrou).
-        ts_* = horloge interne carte (ms, u32) prefixee des trames ; *_age = fraicheur
+        ts_* = horloge interne carte (ms) prefixee des trames ; *_age = fraicheur
         cote hote (secondes depuis la derniere reception), None si jamais recu -- meme
         convention que GroveComSerial.snapshot."""
         now = time.time()
@@ -331,7 +320,7 @@ class RobotComSerial:
 
     # --- envoi de commandes -------------------------------------------------
     def _write(self, frame):
-        if self.ser is None:
+        if self.ser is None or not frame:
             return False
         try:
             self.ser.write(frame)
@@ -344,9 +333,9 @@ class RobotComSerial:
             return False
 
     def sendMotor(self, m1, m2, m3, m4):
-        """FUNC_MOTOR : 4 PWM signes en % (int8, -100..100)."""
+        """Consigne PWM brute : 4 valeurs signees en % (-100..100), boucle ouverte."""
         vals = [max(-100, min(100, int(v))) for v in (m1, m2, m3, m4)]
-        frame = build_frame(FUNC_MOTOR, bytes((v & 0xFF) for v in vals))
+        frame = self._codec.motor(*vals)
         ok = self._write(frame)
         if self.tel:
             self.tel.log("tx_motor", m=vals, hex=frame.hex(), ok=ok)
@@ -361,21 +350,21 @@ class RobotComSerial:
         return ok
 
     def sendServo(self, sid, angle):
-        """FUNC_PWM_SERVO : servo id 1..4, angle 0..180 (borne cote firmware aussi)."""
+        """Positionne un servo : id 1..4, angle 0..180 (borne cote firmware aussi)."""
         sid = int(sid)
         angle = max(0, min(180, int(round(angle))))
         if sid not in (1, 2, 3, 4):
             return False
-        frame = build_frame(FUNC_PWM_SERVO, bytes([sid, angle]))
+        frame = self._codec.servo(sid, angle)
         ok = self._write(frame)
         if self.tel:
             self.tel.log("tx_servo", id=sid, angle=angle, hex=frame.hex(), ok=ok)
         return ok
 
     def sendServoAll(self, a1, a2, a3, a4):
-        """FUNC_PWM_SERVO_ALL : 4 angles 0..180 d'un seul coup (S1..S4)."""
+        """Positionne les 4 servos (S1..S4), angles 0..180 d'un seul coup."""
         vals = [max(0, min(180, int(round(a)))) for a in (a1, a2, a3, a4)]
-        frame = build_frame(FUNC_PWM_SERVO_ALL, bytes(vals))
+        frame = self._codec.servo_all(*vals)
         ok = self._write(frame)
         if self.tel:
             self.tel.log("tx_servo_all", a=vals, hex=frame.hex(), ok=ok)
@@ -386,27 +375,20 @@ class RobotComSerial:
         telemetrie : destine aux rafales anti-watchdog de motor_drive (40+ envois).
         Pour le teleop clavier ponctuel, utiliser sendMotor (qui journalise)."""
         v = [max(-100, min(100, int(x))) for x in vals]
-        return self._write(build_frame(FUNC_MOTOR, bytes((x & 0xFF) for x in v)))
+        return self._write(self._codec.motor(*v))
 
     def sendCmdVel(self, linear_x, angular_z):
-        """Consigne de vitesse aux conventions ROS (FUNC_MOTION 0x12).
+        """Consigne de vitesse aux conventions ROS (Twist).
 
-        La kinematics differentielle + le PID par roue tournent SUR la carte :
-        on n'envoie que le Twist. Conversion :
-          - Vx (int16 mm/s)  = linear.x (m/s)  x 1000, borne +-1000 (plafond firmware ~1 m/s)
-          - Vz (int16 mrad/s) = angular.z (rad/s) x 1000, borne +-2000 (~2 rad/s)
-          - Vy = 0 (chassis differentiel/4-roues)
-        Tout a zero -> Motion_Stop(BRAKE) cote carte. parm=0 (pas de tenue de cap yaw).
+        La kinematics differentielle + le PID par roue tournent SUR la carte : on
+        n'envoie que le Twist (linear.x m/s, angular.z rad/s ; Vy=0). La mise a
+        l'echelle vers le format du fil est faite par le codec (mm/s en yahboom,
+        SI en MAVLink). Tout a zero -> arret franc cote carte.
         """
-        def s16le(x):
-            v = int(round(x)) & 0xFFFF
-            return bytes([v & 0xFF, (v >> 8) & 0xFF])
-        vx = max(-1000, min(1000, int(round(linear_x * 1000.0))))
-        vz = max(-2000, min(2000, int(round(angular_z * 1000.0))))
-        payload = bytes([0x00]) + s16le(vx) + s16le(0) + s16le(vz)
-        ok = self._write(build_frame(FUNC_MOTION, payload))
+        frame = self._codec.cmd_vel(linear_x, angular_z)
+        ok = self._write(frame)
         if self.tel:
-            self.tel.log("tx_motion", vx=vx, vz=vz, ok=ok)
+            self.tel.log("tx_motion", vx=linear_x, vz=angular_z, ok=ok)
         return ok
 
     # --- lectures instantanees derivees ------------------------------------
@@ -422,14 +404,14 @@ class RobotComSerial:
             return None
         return [(pts[-1][1][i] - pts[0][1][i]) / dt for i in range(4)]
 
-    # --- requete/reponse (REQUEST_DATA 0x50 -> report) ---------------------
-    def _requestReport(self, req_params, read, timeout=1.5):
-        """Ecrit REQUEST_DATA(req_params) puis attend une valeur fraiche via read().
+    # --- requete/reponse (lecture d'un rapport apres emission de la requete) ---
+    def _requestReport(self, req_frame, read, timeout=1.5):
+        """Ecrit la (les) trame(s) de requete puis attend une valeur fraiche via read().
 
         read() renvoie la valeur decodee si un rapport PLUS RECENT que l'appel est
         arrive, sinon None. Retourne la valeur ou None sur timeout / port ferme.
         """
-        if not self._write(build_frame(FUNC_REQUEST_DATA, req_params)):
+        if not self._write(req_frame):
             return None
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -440,7 +422,7 @@ class RobotComSerial:
         return None
 
     def getCarType(self, timeout=1.5):
-        """Type de chassis (0x01..0x06) via REQUEST_DATA(0x15). Applique cpr si connu."""
+        """Type de chassis (0x01..0x06). Applique le cpr correspondant si connu."""
         with self.lock:
             base_t = self.car_type_t
 
@@ -450,7 +432,7 @@ class RobotComSerial:
                     return self.car_type
             return None
 
-        ct = self._requestReport(bytes([FUNC_CAR_TYPE, 0x00]), read, timeout)
+        ct = self._requestReport(self._codec.request_car_type(), read, timeout)
         if ct is not None:
             cpr, _ = CAR_TYPE_CPR.get(ct, (None, None))
             if cpr:
@@ -458,13 +440,11 @@ class RobotComSerial:
         return ct
 
     def setCarType(self, car_type, save=True):
-        """Ecrit le type de chassis (FUNC_CAR_TYPE = [type, verify])."""
-        verify = SAVE_VERIFY if save else 0x00
-        return self._write(build_frame(FUNC_CAR_TYPE,
-                                       bytes([int(car_type) & 0xFF, verify])))
+        """Ecrit le type de chassis (persiste en flash si save)."""
+        return self._write(self._codec.set_car_type(car_type, save=save))
 
     def getWheelGeom(self, timeout=1.5):
-        """Geometrie roue courante (dict decode_wheel_geom) via REQUEST_DATA(0x16)."""
+        """Geometrie roue courante (dict cpr/circ/diam/APB)."""
         with self.lock:
             base_t = self.wheel_geom_t
 
@@ -474,31 +454,17 @@ class RobotComSerial:
                     return dict(self.wheel_geom)
             return None
 
-        return self._requestReport(bytes([FUNC_SET_WHEEL_GEOM, 0x00]), read, timeout)
+        return self._requestReport(self._codec.request_wheel_geom(), read, timeout)
 
     def setWheelGeom(self, cpr, circ_mm, apb_mm, save=True):
-        """Ecrit la geometrie roue (cpr entier ; circ_mm/apb_mm en mm -> stockes *10).
-
-        Retourne (ok, err) : err non nul si une valeur sort de la plage u16.
-        """
-        try:
-            cpr_i = int(round(float(cpr)))
-            circ10 = int(round(float(circ_mm) * 10.0))
-            apb10 = int(round(float(apb_mm) * 10.0))
-        except (TypeError, ValueError):
-            return False, "valeurs non numeriques (cpr / circ_mm / apb_mm)."
-        if not (0 < cpr_i <= 0xFFFF and 0 < circ10 <= 0xFFFF and 0 < apb10 <= 0xFFFF):
-            return False, ("hors plage : cpr=%d circ10=%d apb10=%d "
-                           "(1..65535 ; circ/APB <= 6553.5 mm)." % (cpr_i, circ10, apb10))
-        verify = SAVE_VERIFY if save else 0x00
-        payload = bytes([cpr_i & 0xFF, (cpr_i >> 8) & 0xFF,
-                         circ10 & 0xFF, (circ10 >> 8) & 0xFF,
-                         apb10 & 0xFF, (apb10 >> 8) & 0xFF, verify])
-        return self._write(build_frame(FUNC_SET_WHEEL_GEOM, payload)), None
+        """Ecrit la geometrie roue. Retourne (ok, err) : err non nul si valeur invalide."""
+        frame, err = self._codec.set_wheel_geom(cpr, circ_mm, apb_mm, save=save)
+        if err is not None:
+            return False, err
+        return self._write(frame), None
 
     def getPid(self, index, timeout=1.5):
-        """PID courant (dict kp/ki/kd) : index 1..4 = moteur M1..M4, 5 = yaw."""
-        func = FUNC_SET_YAW_PID if index == 5 else FUNC_SET_MOTOR_PID
+        """PID courant (dict {index,kp,ki,kd}) : index 1..4 = moteur M1..M4, 5 = yaw."""
         with self.lock:
             prev = self.pid.get(index)
             base_t = prev[1] if prev else 0.0
@@ -510,52 +476,28 @@ class RobotComSerial:
                     return dict(cur[0])
             return None
 
-        return self._requestReport(bytes([func, index & 0xFF]), read, timeout)
-
-    @staticmethod
-    def _pidArgs(motor_id, save):
-        """Octet de garde/selecteur : quartet haut = moteur (0=tous, 1..4=un), quartet
-        bas = 0x0F pour sauver en flash sinon 0x00. motor_id=0 & save -> 0x0F = SAVE_VERIFY
-        (compat legacy 'tous + flash')."""
-        return ((int(motor_id) & 0x0F) << 4) | (0x0F if save else 0x00)
-
-    @staticmethod
-    def _pidPayload(kp, ki, kd, args):
-        """[kp*1000][ki*1000][kd*1000] u16 little-endian + octet args (selecteur+save)."""
-        def u16(x):
-            v = int(round(x * 1000.0)) & 0xFFFF
-            return bytes([v & 0xFF, (v >> 8) & 0xFF])
-        return u16(kp) + u16(ki) + u16(kd) + bytes([args & 0xFF])
+        return self._requestReport(self._codec.request_pid(index), read, timeout)
 
     def setMotorPid(self, kp, ki, kd, save=False, motor_id=0, disable=False):
-        """Regle le PID d'UN moteur (FUNC_SET_MOTOR_PID).
+        """Regle le PID moteur (motor_id : 0 = les 4, 1..4 = un moteur M1..M4).
 
-        motor_id : 0 = les 4 moteurs (compat), 1..4 = un moteur (M1..M4).
-        disable=True : envoie la sentinelle (gains 0xFFFF) -> la carte desactive le PID
-          de ce moteur (encodeur HS) et le cale en recopie sur son voisin de meme cote.
-          Ignore pour motor_id=0 (on ne desactive pas les 4 d'un coup).
+        disable=True (Yahboom/STM32) : desactive le PID de ce moteur (encodeur HS)
+          et le cale en recopie sur son voisin ; ignore pour motor_id=0 et sans
+          equivalent MAVLink (le codec l'ignore, mode yahboom par defaut).
         save=True : persiste en flash (RAM seule sinon).
         """
-        args = self._pidArgs(motor_id, save)
-        if disable and motor_id != 0:
-            # Sentinelle brute : 3 mots a 0xFFFF (ne PAS passer par u16(*1000)).
-            payload = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, args & 0xFF])
-            return self._write(build_frame(FUNC_SET_MOTOR_PID, payload))
-        return self._write(build_frame(FUNC_SET_MOTOR_PID,
-                                       self._pidPayload(kp, ki, kd, args)))
+        return self._write(self._codec.set_motor_pid(kp, ki, kd, save=save,
+                                                      motor_id=motor_id, disable=disable))
 
     def setYawPid(self, kp, ki, kd, save=False):
-        """PID de cap/yaw (FUNC_SET_YAW_PID). Le handler 0x14 attend l'octet SAVE_VERIFY
-        (0x5F) pour flasher (pas de selecteur moteur ici)."""
-        verify = SAVE_VERIFY if save else 0x00
-        return self._write(build_frame(FUNC_SET_YAW_PID,
-                                       self._pidPayload(kp, ki, kd, verify)))
+        """PID de cap/yaw (persiste en flash si save)."""
+        return self._write(self._codec.set_yaw_pid(kp, ki, kd, save=save))
 
     def enterBootloader(self):
-        """Fait sauter la carte dans son bootloader ROM (FUNC 0xA3), plusieurs
-        envois pour robustesse, puis FERME le port pour liberer COM (upload/flash).
-        Retourne True si au moins un envoi a reussi."""
-        frame = build_frame(FUNC_ENTER_BOOTLOADER, bytes([SAVE_VERIFY]))
+        """Fait sauter la carte dans son bootloader (plusieurs envois pour robustesse)
+        puis FERME le port pour liberer COM (upload/flash). Retourne True si au moins
+        un envoi a reussi."""
+        frame = self._codec.enter_bootloader()
         sent = False
         for _ in range(3):
             sent = self._write(frame) or sent
