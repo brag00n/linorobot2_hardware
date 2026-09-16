@@ -62,6 +62,13 @@ class IMUInterface{
         {
             IMUInterface::Vector_t gyro;
 
+            // Remise a zero de l'accumulateur AVANT la moyenne : garantit un biais
+            // correct au 1er appel (membre non initialise) et surtout lors des
+            // recalibrages a la demande (sinon les biais successifs s'additionnent).
+            gyro_cal_.x = 0.0f;
+            gyro_cal_.y = 0.0f;
+            gyro_cal_.z = 0.0f;
+
             for(int i=0; i<sample_size_; i++)
             {
                 gyro = readGyroscope();
@@ -103,6 +110,15 @@ class IMUInterface{
             return imu_msg_;
         }
 
+        // Recalibrage du biais gyro A LA DEMANDE (robot immobile) : re-mesure la moyenne
+        // du gyroscope et la retranche des lectures suivantes. Exposee pour le handler
+        // MAVLink MAV_CMD_PREFLIGHT_CALIBRATION (re-zerotage du cap sans reboot). Bloque
+        // ~2 s (sample_size_ x delay(50)) ; a n'appeler qu'a l'arret.
+        void recalibrateGyro()
+        {
+            calibrateGyro();
+        }
+
         IMUInterface& readIMU()
         {
             imu_msg_.angular_velocity = readGyroscope();
@@ -134,18 +150,19 @@ class IMUInterface{
             imu_msg_.orientation_covariance[4] = ori_cov[1];
             imu_msg_.orientation_covariance[8] = ori_cov[2];
 
-#ifdef ENABLE_CONNECTOR_SERIAL_FRAME
+#if defined(ENABLE_CONNECTOR_SERIAL_FRAME) || defined(ENABLE_MAVLINK)
             // --- Estimation d'orientation (filtre complementaire) ---
             // Le wrapper QMI8658IMU (robot #2 WaveShare) ne calcule aucune orientation :
-            // sans ce bloc, imu_msg_.orientation reste (0,0,0,0) et ConnectorSerialFrame::
-            // publishImu emet des trames 0x0C a roll/pitch/yaw = 0 (bug HUD « IMU +0.0 »).
+            // sans ce bloc, imu_msg_.orientation reste (0,0,0,0) et publishImu (trames binaires
+            // 0x0C OU ATTITUDE #30 MAVLink) emet roll/pitch/yaw = 0 (bug HUD « IMU +0.0 »).
             // On l'estime donc ici, a partir des grandeurs deja remplies ci-dessus :
             //   - accelerometre (m/s^2) -> roll/pitch ABSOLUS via la gravite (basse freq) ;
             //   - gyroscope (rad/s, deja calibre) -> integration (haute freq) + cap yaw
             //     RELATIF (pas de reference absolue tant que le magneto n'est pas fusionne).
             // Melange complementaire (alpha) puis conversion en quaternion (ordre ZYX) que
-            // publishImu reconvertit en angles d'Euler. Garde sous ENABLE_CONNECTOR_SERIAL_FRAME
-            // pour ne PAS toucher la nav micro-ROS (qui a sa propre fusion).
+            // publishImu reconvertit en angles d'Euler. Garde sous les DEUX transports app
+            // (ConnectorSerialFrame et ConnectorMavlink, qui n'ont pas de fusion propre) mais
+            // PAS sous micro-ROS (nav ROS avec sa propre fusion en aval).
             {
                 static uint32_t last_us = 0;
                 static float est_roll = 0.0f, est_pitch = 0.0f, est_yaw = 0.0f;
@@ -196,7 +213,7 @@ class IMUInterface{
                 imu_msg_.orientation.y = cr * sp * cy + sr * cp * sy;
                 imu_msg_.orientation.z = cr * cp * sy - sr * sp * cy;
             }
-#endif // ENABLE_CONNECTOR_SERIAL_FRAME
+#endif // ENABLE_CONNECTOR_SERIAL_FRAME || ENABLE_MAVLINK
 
 #ifdef IMU_TWEAK
             IMU_TWEAK

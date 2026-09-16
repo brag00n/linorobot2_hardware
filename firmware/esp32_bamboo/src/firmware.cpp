@@ -436,6 +436,15 @@ void publishData()
 
     // publish imu data
 #ifdef ENABLE_DEVICE_IMU
+#ifdef ENABLE_MAVLINK
+    // Recalibrage gyro a la demande (MAV_CMD_PREFLIGHT_CALIBRATION param1=1) : le
+    // connecteur a pose le drapeau a la reception, on le consomme ici (hors ISR) et on
+    // recalibre le biais (~2 s bloquant, robot immobile). Fait avant readIMU pour que la
+    // 1re lecture suivante integre deja le nouveau biais.
+    if (connectorROS.takeGyroCalRequest()) {
+        imu.recalibrateGyro();
+    }
+#endif // ENABLE_MAVLINK
     IMUInterface::Imu_t imu_msg = imu.readIMU().getData();
 #ifdef USE_FAKE_IMU
 #ifdef ENABLE_DEVICE_ENCODER

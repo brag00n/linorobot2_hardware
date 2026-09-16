@@ -300,11 +300,18 @@ void ConnectorMavlink::handleCommandLong() {
         sendCommandAck(cmd, MAV_RESULT_ACCEPTED); // ACK avant de partir
         if ((int)p1 == 1) ESP.restart();
         return;
-    // Fonctions absentes sur cette carte (servo ST3215 hors perimetre, pas de
-    // recalibration IMU exposee, pas de persistance flash, pas de controleur yaw
-    // ni de reset odometrie cote connecteur) : ACK honnete UNSUPPORTED.
-    case MAV_CMD_DO_SET_SERVO:
+    // Recalibrage du biais gyro (param1=1 = gyro, semantique MAVLink standard). On ne
+    // recalibre pas dans ce handler (bloquant ~2 s) : on pose un drapeau consomme par la
+    // boucle firmware, et on ACK ACCEPTED tout de suite (accepte, pas encore termine).
+    // Robot suppose immobile. param1!=1 (accel/mag/...) : non gere -> UNSUPPORTED.
     case MAV_CMD_PREFLIGHT_CALIBRATION:
+        if ((int)p1 == 1) { gyroCalReq_ = true; result = MAV_RESULT_ACCEPTED; }
+        else              { result = MAV_RESULT_UNSUPPORTED; }
+        break;
+    // Fonctions absentes sur cette carte (servo ST3215 hors perimetre, pas de
+    // persistance flash, pas de controleur yaw ni de reset odometrie cote
+    // connecteur) : ACK honnete UNSUPPORTED.
+    case MAV_CMD_DO_SET_SERVO:
     case MAV_CMD_PREFLIGHT_STORAGE:
     case MAV_CMD_USER_1:
     case MAV_CMD_USER_2:
@@ -313,6 +320,14 @@ void ConnectorMavlink::handleCommandLong() {
         break;
     }
     sendCommandAck(cmd, result);
+}
+
+// Consommation du drapeau de recalibrage gyro (pose par handleCommandLong). La boucle
+// firmware l'appelle a chaque tour ; retourne true UNE seule fois par demande.
+bool ConnectorMavlink::takeGyroCalRequest() {
+    if (!gyroCalReq_) return false;
+    gyroCalReq_ = false;
+    return true;
 }
 
 // ======================================================================= //

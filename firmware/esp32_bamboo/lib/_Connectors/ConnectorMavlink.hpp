@@ -57,6 +57,13 @@ class ConnectorMavlink : public Connector {
     struct timespec getTime();
     int64_t getMillis(); // utilise par EXECUTE_EVERY_N_MS dans firmware.cpp
 
+    // Recalibrage gyro a la demande : le handler MAV_CMD_PREFLIGHT_CALIBRATION pose un
+    // drapeau (ACK immediat, sans bloquer le parsing serie), consomme par la boucle
+    // firmware qui lance le recalibrage ~2 s sur l'objet IMU (que ce connecteur ne
+    // possede pas). Retourne true UNE fois si une demande etait en attente, puis la
+    // rearme a false.
+    bool takeGyroCalRequest();
+
   private:
     // --- emission (pack MAVLink -> UART) ---
     void sendMessage();               // serialise s_tx_msg_ vers Serial
@@ -84,6 +91,7 @@ class ConnectorMavlink : public Connector {
     float    yawP_ = 0, yawI_ = 0, yawD_ = 0; // pas de controleur yaw : memorise pour echo
     uint32_t lastTick_ = 0;   // cadence du tick de controle (~10 Hz)
     uint32_t lastHeartbeat_ = 0; // cadence HEARTBEAT (~1 Hz)
+    volatile bool gyroCalReq_ = false; // demande de recalibrage gyro en attente
 };
 
 #endif // CONNECTOR_MAVLINK_H
