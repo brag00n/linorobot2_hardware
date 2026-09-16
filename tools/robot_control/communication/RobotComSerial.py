@@ -120,6 +120,28 @@ class RobotComSerial:
         hwid = (getattr(p, "hwid", "") or "").upper()
         return any(vp in hwid for vp in want)
 
+    def _preferred_port_ok(self):
+        """La carte presente sur le port PREFERE porte-t-elle le bon VID:PID ?
+
+        Controle d'identite INSTANTANE (lecture de l'enumeration, sans ouvrir le
+        port) : « le nom de la carte associee au COM configure ». Sert a n'accorder
+        la connexion instantanee qu'a la bonne carte ; sinon on bascule en scan.
+        - pas de VID:PID cible -> True (rien a controler, comportement historique) ;
+        - port configure absent de l'enumeration -> False (ex. COM perime) ;
+        - un autre device branche sur ce COM -> False (mauvaise carte).
+        NB : deux adaptateurs de meme VID:PID sont indiscernables ici -> c'est le
+        probe+sysid du scan qui tranche (cf. WaveShare 2x CP-2102).
+        """
+        if not self.vid_pid:
+            return True
+        try:
+            for p in list_ports.comports():
+                if p.device == self.port:
+                    return self._matches_vid_pid(p)
+        except Exception:
+            return False
+        return False   # port prefere absent de l'enumeration
+
     def _candidates(self):
         """Autres ports COM disponibles (le port prefere exclu, deja tente).
 
@@ -179,17 +201,23 @@ class RobotComSerial:
         return ok, None
 
     def _open(self):
-        # 1) port prefere : on l'ouvre et on lui fait confiance s'il s'ouvre.
-        try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
-            self.last_err = None
-            if self.tel:
-                self.tel.log("event", msg="com_open", port=self.port, mode="prefere")
-            return
-        except Exception as e:                     # port occupe / absent / errone
-            self.last_err = str(e)
-            self.ser = None
-        # 2) scan auto : on cherche le port qui PARLE le protocole actif.
+        # 1) port prefere : connexion INSTANTANEE, mais seulement si la carte
+        #    presente sur ce COM porte le bon VID:PID (controle d'identite). Un COM
+        #    perime ou un autre device branche dessus -> on ne s'y accroche pas, on
+        #    passe directement au scan (sinon on ouvrirait la mauvaise carte).
+        if self._preferred_port_ok():
+            try:
+                self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+                self.last_err = None
+                if self.tel:
+                    self.tel.log("event", msg="com_open", port=self.port, mode="prefere")
+                return
+            except Exception as e:                 # port occupe / absent / errone
+                self.last_err = str(e)
+                self.ser = None
+        else:
+            self.last_err = f"carte attendue absente du port prefere {self.port}"
+        # 2) scan auto : on cherche le port qui PARLE le protocole actif (probe+sysid).
         for cand in self._candidates():
             ok, s = self._probe(cand)
             if s is not None:

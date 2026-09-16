@@ -4,7 +4,7 @@
   "control": {
     "kind": "stm32",
     "vid_pid": ["1A86:7523"],
-    "port": "COM4",
+    "port": "COM7",
     "baud": 115200,
     "cpr": 1320
   },
