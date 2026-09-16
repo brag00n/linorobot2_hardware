@@ -21,10 +21,13 @@
 //#define ENABLE_PARAMETER
 
 // --- Bascule de transport (meme motif que l'ESP32) : par defaut le firmware compile
-// le chemin micro-ROS (rclc) ; avec -D ENABLE_CONNECTOR_SERIAL_FRAME il compile a la
-// place la branche trames binaires Bamboo, EXCLUSIVE de micro-ROS sur le meme UART.
+// le chemin micro-ROS (rclc) ; un build-flag selectionne a la place un transport serie
+// EXCLUSIF de micro-ROS sur le meme UART. Trois transports mutuellement exclusifs :
+//   (aucun flag)                      -> micro-ROS (ENABLE_CONNECTOR_ROS)
+//   -D ENABLE_CONNECTOR_SERIAL_FRAME  -> trames binaires Bamboo (SerialFrame)
+//   -D ENABLE_MAVLINK                 -> MAVLink v2, dialecte bamboo (MavFrame)
 // Le chemin micro-ROS reste 100% intact par defaut (build par defaut inchange).
-#ifndef ENABLE_CONNECTOR_SERIAL_FRAME
+#if !defined(ENABLE_CONNECTOR_SERIAL_FRAME) && !defined(ENABLE_MAVLINK)
   #define ENABLE_CONNECTOR_ROS
 #endif
 
@@ -64,8 +67,11 @@
 #include "motor.h"
 
 #ifdef ENABLE_CONNECTOR_ROS
-#include "odometry.h"   // tire micro_ros_utilities/*_msgs : JAMAIS dans la branche trames
+#include "odometry.h"   // tire micro_ros_utilities/*_msgs : JAMAIS dans les branches serie
 #include "imu.h"
+#elif defined(ENABLE_MAVLINK)
+#include "MavFrame.h"    // couche MAVLink v2 autonome (lib/_SerialFrame)
+#include "ImuAtt.h"      // attitude MPU6050 par filtre complementaire (pas de wrapper ROS)
 #else
 #include "SerialFrame.h" // couche trames binaires autonome (lib/_SerialFrame)
 #include "ImuAtt.h"      // attitude MPU6050 par filtre complementaire (pas de wrapper ROS)
@@ -124,14 +130,19 @@ rclc_parameter_server_t param_server;
 
 unsigned long long time_offset = 0;
 #else
-// Branche trames binaires : shim POD reproduisant twist_msg.linear.x/.y/.angular.z
-// (+ agregat = {0.0}) pour que moveBase()/stop()/fullStop() compilent INCHANGES.
+// Branches serie (trames binaires ou MAVLink) : shim POD reproduisant
+// twist_msg.linear.x/.y/.angular.z (+ agregat = {0.0}) pour que
+// moveBase()/stop()/fullStop() compilent INCHANGES.
 struct TwistShim {
   struct { double x, y, z; } linear;
   struct { double x, y, z; } angular;
 };
 TwistShim twist_msg;
+#if defined(ENABLE_MAVLINK)
+MavFrame    sf;   // API publique identique a SerialFrame (seam .ino inchange)
+#else
 SerialFrame sf;
+#endif
 ImuAtt      imuAtt;
 bool  g_imuOk = false;              // MPU6050 present ? sinon emitImu(0,0,0) en repli
 float g_vx = 0, g_vy = 0, g_wz = 0; // derniere vitesse mesuree (cache pour emitSpeed 0x0A)
@@ -326,6 +337,10 @@ void setup()
     sf.setWheelGeom((uint16_t)COUNTS_PER_REV1,
                     (float)(WHEEL_DIAMETER * PI * 1000.0),        // circonference en mm
                     (float)(LR_WHEELS_DISTANCE * 0.5 * 1000.0));  // demi-voie en mm
+#if defined(ENABLE_MAVLINK)
+    // Cable la recalibration gyro a la demande (COMMAND_LONG PREFLIGHT_CALIBRATION).
+    sf.setCalibrate(onCalibrateGyro);
+#endif
     flashLED(2,120);
 #endif
 }
@@ -409,6 +424,16 @@ void onPid(float kp_, float ki_, float kd_)
     motor2_pid.updateConstants(kp_, ki_, kd_);
     motor3_pid.updateConstants(kp_, ki_, kd_);
     motor4_pid.updateConstants(kp_, ki_, kd_);
+}
+
+// Recalibration du biais gyro a la demande (MAVLink PREFLIGHT_CALIBRATION). Cablee
+// uniquement en mode MAVLink (MavFrame::setCalibrate) ; en mode trames binaires la
+// fonction existe mais n'est jamais appelee (aucun funcode mappe). Renvoie true si le
+// biais a ete retenu (carte immobile), false sinon (IMU absente ou carte en mouvement).
+bool onCalibrateGyro()
+{
+    if (!g_imuOk) return false;      // IMU absente -> echec honnete
+    return imuAtt.calibrateGyro();   // garde-fou immobilite dans ImuAtt
 }
 #endif
 
