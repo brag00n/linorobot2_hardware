@@ -955,7 +955,8 @@ class RobotControlCore:
             self.grovepi = GrovePiNode(port=sensors.get("port"),
                                        baud=sensors.get("baud", 115200),
                                        telemetry=self.tel,
-                                       vid_pid=sensors.get("vid_pid"))
+                                       vid_pid=sensors.get("vid_pid"),
+                                       protocol=sensors.get("protocol", "yahboom"))
 
         # 4) nodes + executeur : en --board-only, seules les cartes (ni cam ni suivi)
         self.executor = Executor()

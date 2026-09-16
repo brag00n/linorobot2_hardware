@@ -14,17 +14,29 @@ etre absente au demarrage : le thread reessaie l'ouverture toutes les 1,5 s et
 `connected` reflete l'etat courant -> l'app demarre sans la carte et l'affiche des
 qu'elle apparait (cf. RobotControlCore, exigence « demarrer sans grovepi »).
 
-Protocole report (cf. firmware/grovepi_bamboo/tools/check.py, source unique) :
-  0x51 VERSION      [major][minor][patch]
-  0x60 REPORT_IMU   [ts u32][roll i16*100][pitch i16*100][ax ay az gx gy gz i16]
-  0x61 REPORT_ULTRA [ts u32][4x u16 mm]           (0xFFFF = pas d'echo)
-  0x62 REPORT_IR    [ts u32][dist u16][adc u16]
+PROTOCOLE DE FIL ENFICHABLE (parametre `protocol`, comme RobotComSerial) :
+  - "yahboom" (DEFAUT) : trames report maison, decodees par GroveYahboomCodec (ci-dessous).
+      0x51 VERSION      [major][minor][patch]
+      0x60 REPORT_IMU   [ts u32][roll i16*100][pitch i16*100][ax ay az gx gy gz i16]
+      0x61 REPORT_ULTRA [ts u32][4x u16 mm]           (0xFFFF = pas d'echo)
+      0x62 REPORT_IR    [ts u32][dist u16][adc u16]
+  - "mavlink" : MAVLink v2, dialecte `bamboo` (sysid 4), via le MavlinkCodec partage
+      (cf. wirecodec) : ATTITUDE + SCALED_IMU (IMU), DISTANCE_SENSOR x5 (ultra id 0..3,
+      IR id 4). Note : en MAVLink l'accel est en mg et le gyro en mrad/s (SCALED_IMU
+      standard), la ou le yahboom expose des bruts LSB ; l'ADC IR n'a pas d'equivalent
+      standard -> ir_adc reste None en mode mavlink.
+
+Les deux codecs produisent les MEMES evenements normalises consommes par _applyEvent :
+  ("version",{version})  ("imu",{roll,pitch,ts})  ("imu_raw",{accel,gyro,ts})
+  ("ultra",{id,mm,ts})   ("ir",{id,mm,adc?,ts})   -> snapshot inchange (seam stable).
 """
 import threading
 import time
 
 import serial
 from serial.tools import list_ports
+
+from .wirecodec import make_codec
 
 BAUD = 115200
 PTO_HEAD = 0xFF
@@ -95,16 +107,80 @@ class GroveFrameParser:
         return len(b) - 1 if b and b[-1] == PTO_HEAD else None
 
 
+class GroveYahboomCodec:
+    """Codec du protocole report maison de la GrovePi -> evenements normalises.
+
+    Enveloppe fine autour de GroveFrameParser : meme interface que MavlinkCodec
+    (feed -> (events, n_ok, n_bad)) pour que GroveComSerial route les deux protocoles
+    par le meme chemin (_applyEvent). Les evenements sont identiques a ceux du
+    MavlinkCodec pour la carte capteurs -> l'etat expose (snapshot) ne depend pas du fil.
+    """
+
+    def __init__(self):
+        self._parser = GroveFrameParser()
+
+    def feed(self, chunk):
+        events, n_ok, n_bad = [], 0, 0
+        for func, data, good in self._parser.feed(chunk):
+            if not good:
+                n_bad += 1
+                continue
+            n_ok += 1
+            events.extend(self._decode(func, data))
+        return events, n_ok, n_bad
+
+    @staticmethod
+    def _decode(func, data):
+        if func == FUNC_REPORT_IMU and len(data) >= 20:
+            ts = _u32(data, 0)
+            # ATTITUDE (roll/pitch en deg) + bruts accel/gyro (LSB) separes, comme
+            # en MAVLink (ATTITUDE + SCALED_IMU) : deux evenements distincts.
+            return [
+                ("imu", {"roll": _s16(data[4], data[5]) / 100.0,
+                         "pitch": _s16(data[6], data[7]) / 100.0, "ts": ts}),
+                ("imu_raw", {"accel": (_s16(data[8], data[9]), _s16(data[10], data[11]),
+                                       _s16(data[12], data[13])),
+                             "gyro": (_s16(data[14], data[15]), _s16(data[16], data[17]),
+                                      _s16(data[18], data[19])), "ts": ts}),
+            ]
+        if func == FUNC_REPORT_ULTRA and len(data) >= 12:
+            ts = _u32(data, 0)
+            out = []
+            for i in range(4):
+                v = _u16(data[4 + 2 * i], data[5 + 2 * i])
+                out.append(("ultra", {"id": i, "mm": None if v == DIST_NONE else v, "ts": ts}))
+            return out
+        if func == FUNC_REPORT_IR and len(data) >= 8:
+            ts = _u32(data, 0)
+            d = _u16(data[4], data[5])
+            return [("ir", {"id": 4, "mm": None if d == DIST_NONE else d,
+                            "adc": _u16(data[6], data[7]), "ts": ts})]
+        if func == FUNC_VERSION and len(data) >= 3:
+            return [("version", {"version": "%d.%d.%d" % (data[0], data[1], data[2])})]
+        return []
+
+
 class GroveComSerial:
     """Ecouteur serie non bloquant de la carte capteurs. Reconnexion automatique."""
 
-    def __init__(self, port="COM6", baud=BAUD, telemetry=None, vid_pid=None):
+    def __init__(self, port="COM6", baud=BAUD, telemetry=None, vid_pid=None,
+                 protocol="yahboom", expected_sysid=4, **codec_kwargs):
         self.port = port
         self.baud = baud
         self.tel = telemetry
         # VID:PID cibles ("VVVV:PPPP") pour PRIORISER les bons ports au scan auto
         # (None = pas de filtrage, comportement historique). Cf. RobotComSerial.
         self.vid_pid = tuple(vid_pid) if vid_pid else None
+        # Protocole de fil ("yahboom" par defaut, ou "mavlink") : selectionne le codec.
+        self.protocol = (protocol or "yahboom").lower()
+        self._codec_kwargs = codec_kwargs
+        self._codec = self._make_codec()
+        # En MAVLink, plusieurs cartes parlent le meme fil : on n'adopte un port que
+        # si son HEARTBEAT porte le sysid attendu (GrovePi = 4) -> pas de capture
+        # accidentelle d'une carte de controle (sysid 1/2/3). Ignore en yahboom (le
+        # format report 0xFB est deja exclusif a cette carte).
+        self.expected_sysid = expected_sysid
+        self.rx_sysid = None
         self.ser = None
         self.lock = threading.RLock()
         self.last_err = None
@@ -129,6 +205,15 @@ class GroveComSerial:
         self._reader.start()
 
     # --- connexion / thread lecteur ----------------------------------------
+    def _make_codec(self):
+        """Fabrique le codec du protocole actif : GroveYahboomCodec (report maison
+        0xFB) en yahboom, MavlinkCodec partage (dialecte bamboo) en mavlink. Le
+        codec yahboom des cartes de controle (wirecodec) NE convient PAS ici : la
+        GrovePi a son propre format report, distinct de la STM32."""
+        if self.protocol == "mavlink":
+            return make_codec("mavlink", **self._codec_kwargs)
+        return GroveYahboomCodec()
+
     def _matches_vid_pid(self, p):
         """True si le port <p> (ListPortInfo) matche l'un des VID:PID cibles.
 
@@ -163,32 +248,42 @@ class GroveComSerial:
         return [p.device for p in infos]
 
     def _probe(self, port, timeout=0.8):
-        """Ouvre un port et compte les trames carte (0xFB) valides.
+        """Ouvre un port et compte les trames valides du protocole actif.
 
-        La carte auto-emet a ~20 Hz : >=2 trames 0xFB decodees en <timeout> => c'est
-        bien la GrovePi (et pas la STM32, qui emet en 0xFC). Retourne
-        (nb_ok, handle_ouvert|None) ; handle garde ouvert seulement si identifie.
+        La carte auto-emet a ~20 Hz : >=2 trames decodees en <timeout> => c'est bien
+        une carte capteurs. En yahboom, le format report 0xFB est deja exclusif (la
+        STM32 emet en 0xFC -> aucune trame validee sur son port). En mavlink, on exige
+        EN PLUS un HEARTBEAT de sysid attendu (GrovePi=4) pour ne pas capter une carte
+        de controle (sysid 1/2/3) qui parle le meme fil ; le timeout est alors rallonge
+        (HEARTBEAT ~1 Hz). Retourne (nb_ok, handle|None) ; handle garde si identifie.
         """
+        need_sysid = self.protocol == "mavlink" and self.expected_sysid is not None
+        if need_sysid and timeout < 1.6:
+            timeout = 1.6                          # laisser passer 1-2 HEARTBEAT
         try:
             s = serial.Serial(port, self.baud, timeout=0.1)
         except Exception:
             return 0, None
-        parser = GroveFrameParser()
+        codec = self._make_codec()
         ok = 0
+        sysid_ok = not need_sysid
         t0 = time.time()
         try:
             while time.time() - t0 < timeout:
                 chunk = s.read(128)
                 if not chunk:
                     continue
-                for _func, _data, good in parser.feed(chunk):
-                    if good:
-                        ok += 1
-                if ok >= 2:
+                events, n_ok, _n_bad = codec.feed(chunk)
+                ok += n_ok
+                for kind, payload in events:
+                    if kind == "heartbeat" and payload.get("sysid") == self.expected_sysid:
+                        sysid_ok = True
+                        self.rx_sysid = payload.get("sysid")
+                if ok >= 2 and sysid_ok:
                     break
         except Exception:
             pass
-        if ok >= 2:
+        if ok >= 2 and sysid_ok:
             return ok, s
         try:
             s.close()
@@ -225,7 +320,6 @@ class GroveComSerial:
             self.tel.log("event", msg="grove_fail", err=self.last_err)
 
     def _readLoop(self):
-        parser = GroveFrameParser()
         while not self._stop:
             if self.ser is None:
                 self._open()
@@ -240,46 +334,51 @@ class GroveComSerial:
                 continue
             if not chunk:
                 continue
-            for func, data, good in parser.feed(chunk):
-                with self.lock:
-                    if not good:
-                        self.bad += 1
-                        continue
-                    self.ok += 1
-                    self._apply(func, data)
+            events, n_ok, n_bad = self._codec.feed(chunk)
+            with self.lock:
+                self.ok += n_ok
+                self.bad += n_bad
+                for kind, payload in events:
+                    self._applyEvent(kind, payload)
 
-    def _apply(self, func, data):
-        """Met a jour l'etat a partir d'une trame decodee (sous verrou)."""
+    def _applyEvent(self, kind, p):
+        """Met a jour l'etat a partir d'un evenement normalise (sous verrou).
+
+        Evenements produits par le codec du protocole actif (yahboom ou mavlink) ->
+        l'etat expose (snapshot) est identique quel que soit le fil. Rappel unites :
+        en mavlink accel=mg / gyro=mrad/s (SCALED_IMU), en yahboom bruts LSB ;
+        ir_adc n'existe qu'en yahboom (None en mavlink).
+        """
         now = time.time()
-        if func == FUNC_REPORT_IMU and len(data) >= 20:
-            self.ts_imu = _u32(data, 0)
-            self.roll = _s16(data[4], data[5]) / 100.0
-            self.pitch = _s16(data[6], data[7]) / 100.0
-            self.accel = (_s16(data[8], data[9]), _s16(data[10], data[11]),
-                          _s16(data[12], data[13]))
-            self.gyro = (_s16(data[14], data[15]), _s16(data[16], data[17]),
-                         _s16(data[18], data[19]))
+        if kind == "imu":
+            self.roll = p["roll"]
+            self.pitch = p["pitch"]
+            self.ts_imu = p.get("ts", self.ts_imu)
             self.imu_t = now
             if self.tel:
                 self.tel.log_rx("grove_imu", roll=self.roll, pitch=self.pitch)
-        elif func == FUNC_REPORT_ULTRA and len(data) >= 12:
-            self.ts_ultra = _u32(data, 0)
-            vals = []
-            for i in range(4):
-                v = _u16(data[4 + 2 * i], data[5 + 2 * i])
-                vals.append(None if v == DIST_NONE else v)
-            self.ultra = vals
+        elif kind == "imu_raw":
+            self.accel = p["accel"]
+            self.gyro = p["gyro"]
+            self.ts_imu = p.get("ts", self.ts_imu)
+            self.imu_t = now
+        elif kind == "ultra":
+            i = p["id"]
+            if 0 <= i < 4:
+                self.ultra[i] = p["mm"]
+            self.ts_ultra = p.get("ts", self.ts_ultra)
             self.ultra_t = now
             if self.tel:
                 self.tel.log_rx("grove_ultra", mm=list(self.ultra))
-        elif func == FUNC_REPORT_IR and len(data) >= 8:
-            self.ts_ir = _u32(data, 0)
-            d = _u16(data[4], data[5])
-            self.ir_dist = None if d == DIST_NONE else d
-            self.ir_adc = _u16(data[6], data[7])
+        elif kind == "ir":
+            self.ir_dist = p["mm"]
+            self.ir_adc = p.get("adc")             # None en mavlink (pas d'ADC standard)
+            self.ts_ir = p.get("ts", self.ts_ir)
             self.ir_t = now
-        elif func == FUNC_VERSION and len(data) >= 3:
-            self.version = "%d.%d.%d" % (data[0], data[1], data[2])
+        elif kind == "version":
+            self.version = p["version"]
+        elif kind == "heartbeat":
+            self.rx_sysid = p.get("sysid")
 
     def _closeSer(self):
         if self.ser is not None:

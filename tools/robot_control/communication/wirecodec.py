@@ -19,6 +19,9 @@ Evenements normalises (kind, payload) consommes par RobotComSerial._applyEvent :
   ("speed",   {vx,vy,vz,battery,ts})   vx/vy en mm/s, vz en rad/s, battery en V|None
   ("battery", {battery})               V (MAVLink : SYS_STATUS separe de la vitesse)
   ("imu",     {roll,pitch,yaw,ts})     degres
+  ("imu_raw", {accel,gyro,ts})         accel (mg) + gyro (mrad/s) bruts - carte capteurs GrovePi
+  ("ultra",   {id,mm,ts})              telemetre ultrason id 0..3, mm|None - GrovePi
+  ("ir",      {id,mm,ts})              telemetre IR id 4, mm|None - GrovePi
   ("mag",     {mx,my,mz,heading,ts})   uT + cap boussole deg
   ("encoder", {m:[M1..M4],ts})         comptage cumulatif
   ("car_type",{value})                 octet type chassis
@@ -286,6 +289,19 @@ class MavlinkCodec:
             return [("imu", {"roll": math.degrees(m.roll),
                              "pitch": math.degrees(m.pitch),
                              "yaw": math.degrees(m.yaw), "ts": m.time_boot_ms})]
+        if t == "SCALED_IMU":
+            # Carte capteurs GrovePi (sysid 4) : accel en mg, gyro en mrad/s (SCALED_IMU
+            # standard). Complement de ATTITUDE (roll/pitch) : evenement distinct pour ne
+            # pas ecraser l'attitude. Les cartes de controle n'emettent pas ce message.
+            return [("imu_raw", {"accel": (m.xacc, m.yacc, m.zacc),
+                                 "gyro": (m.xgyro, m.ygyro, m.zgyro),
+                                 "ts": m.time_boot_ms})]
+        if t == "DISTANCE_SENSOR":
+            # Carte capteurs GrovePi : id 0..3 = HC-SR04 (ultrason), id 4 = Sharp IR.
+            # current_distance en cm ; 0 = pas de mesure (DIST_NONE cote firmware).
+            mm = None if m.current_distance == 0 else m.current_distance * 10
+            kind = "ir" if m.id == 4 else "ultra"
+            return [(kind, {"id": m.id, "mm": mm, "ts": m.time_boot_ms})]
         if t == "SYS_STATUS":
             return [("battery", {"battery": m.voltage_battery / 1000.0})]
         if t == "BAMBOO_WHEEL_STATE":
