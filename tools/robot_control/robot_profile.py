@@ -153,10 +153,19 @@ def resolve(args):
             "port": s.get("port"),
             "baud": s.get("baud", 115200),
             "vid_pid": s.get("vid_pid"),
+            # protocole de fil de la carte capteurs : "yahboom" (defaut) ou "mavlink",
+            # comme les cartes de controle. Sans cette cle, la GrovePi retombait
+            # toujours en yahboom (RobotMain.get("protocol","yahboom")) et ne decodait
+            # pas un flux MAVLink -> grove_fail malgre le profil en mavlink.
+            "protocol": s.get("protocol", "yahboom"),
             "enabled": not getattr(args, "no_grovepi", False),
         }
         if getattr(args, "grovepi_port", None):
             sensors["port"] = args.grovepi_port
+        # Surcharge CLI globale (--protocol), appliquee AVANT que args.protocol ne soit
+        # ecrase par le protocole de la carte de controle principale (seam legacy plus bas).
+        if getattr(args, "protocol", None):
+            sensors["protocol"] = args.protocol
     args.sensors = sensors
 
     # --- valeurs legacy (bannieres/telemetrie/gateway) = carte de controle principale ---
