@@ -30,7 +30,10 @@ void if (isSyslog) syslog(uint16_t priority, const char *fmt, ...) {
 #endif
 
 void syslog(uint16_t priority, const char *fmt, ...) {
-#ifdef ENABLE_SYSLOG
+// En mode MAVLink, `Serial` EST le fil MAVLink (ConnectorMavlink lit/ecrit dessus) :
+// le miroir texte du syslog le corromprait (trames BAD_DATA cote hote). On compile
+// donc le mirroring Serial hors des builds MAVLink -> fil propre.
+#if defined(ENABLE_SYSLOG) && !defined(ENABLE_MAVLINK)
   if (priority > LOG_LEVEL) return;
 
   if (priority == LOG_ERR) {
