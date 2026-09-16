@@ -23,7 +23,15 @@
 
   Messages CUSTOM (ci-dessous) : uniquement ce qu'aucun standard ne couvre proprement.
   IDs dans la plage >= 42000 (hors common.xml) pour eviter toute collision.
-  Adressage : sysid STM32=1, ESP32=2, Teensy=3 ; compid=1 (AUTOPILOT1) ; hote sysid=255.
+  Adressage : sysid STM32=1, ESP32=2, Teensy=3, GrovePi=4 ; compid=1 (AUTOPILOT1) ; hote sysid=255.
+
+  Carte capteurs GrovePi (sysid 4) : n'utilise QUE des messages standard de common.xml
+  (aucun message custom requis, les headers generes les contiennent deja) ->
+    - DISTANCE_SENSOR (#132) : 4 HC-SR04 + 1 Sharp IR, distingues par le champ `id`
+      (0..3 ultrasons, 4 IR) et `orientation`  <- ex 0x61 REPORT_ULTRA / 0x62 REPORT_IR
+    - SCALED_IMU (#26)       : accel/gyro bruts MPU6050  <- ex 0x60 REPORT_IMU (accel/gyro)
+    - ATTITUDE (#30)         : roll/pitch derives MPU6050  <- ex 0x60 REPORT_IMU (angles)
+    - PARAM_* / MAV_CMD_PREFLIGHT_STORAGE : table DeviceConfig + EEPROM  <- ex 0x54/0x55/0x56
 -->
 <mavlink>
   <include>common.xml</include>

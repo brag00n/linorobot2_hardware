@@ -38,6 +38,13 @@
  *   NE PAS utiliser D0/D1 (UART) ni A4/A5 (I2C).
  */
 #include <Arduino.h>
+
+// Transport trames binaires maison : chemin PAR DEFAUT. Sous -D ENABLE_MAVLINK,
+// c'est main_mavlink.cpp qui fournit setup()/loop() (dialecte bamboo) et tout ce
+// fichier est neutralise pour eviter la double definition. Meme motif de garde que
+// MavSensors.cpp / les modules MAVLink des cartes de controle.
+#ifndef ENABLE_MAVLINK
+
 #include <Wire.h>
 #include "Protocol.h"
 #include "Clock.h"
@@ -284,3 +291,5 @@ void loop() {
   if (cfg.slot(SLOT_ULTRA).enabled && due(ultraLastMs, cfg.slot(SLOT_ULTRA).periodMs, now)) sendUltra();
   if (cfg.slot(SLOT_IR).enabled    && due(irLastMs,    cfg.slot(SLOT_IR).periodMs,    now)) { ir.read(); sendIr(); }
 }
+
+#endif // ENABLE_MAVLINK
