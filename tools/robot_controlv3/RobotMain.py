@@ -53,6 +53,7 @@ from robot_control.RobotMain import (
 CMDVEL_PERIOD_S = 0.1
 from robot_control.lib.Telemetry import Telemetry
 from robot_control.version import APP_VERSION
+from robot_control import robot_profile
 from robot_control.communication.RobotComSerial import RobotComSerial, DEFAULT_CPR
 from robot_control.communication.Esp32ComSerial import (
     Esp32ComSerial, ESP32_DEFAULT_CPR, ESP32_DEFAULT_BAUD, ESP32_VID_PID)
@@ -876,11 +877,18 @@ class RobotControlCore:
         control_nodes = []
         for c in enabled:
             is_primary = c is primary
+            # rappel quand le scan auto trouve la carte sur un COM different du COM
+            # configure : on reecrit le port dans le profil robot (self-healing) pour
+            # que le prochain lancement la retrouve instantanement (cf. persist_control_port).
+            on_resolved = (lambda p, kind=c["kind"]:
+                           robot_profile.persist_control_port(
+                               getattr(args, "robot", None), kind, p))
             if c["kind"] == "stm32":
                 link = RobotComSerial(c["port"], c["baud"], telemetry=self.tel,
                                       cpr=c.get("cpr") or DEFAULT_CPR,
                                       vid_pid=c.get("vid_pid"),
-                                      protocol=c.get("protocol", "yahboom"))
+                                      protocol=c.get("protocol", "yahboom"),
+                                      on_port_resolved=on_resolved)
                 node = BoardNode(link)
                 self.board = node
                 self.stm32_link = link
@@ -896,7 +904,8 @@ class RobotControlCore:
                         c["port"], c.get("baud") or ESP32_DEFAULT_BAUD,
                         telemetry=self.tel, cpr=c.get("cpr") or ESP32_DEFAULT_CPR,
                         vid_pid=c.get("vid_pid") or ESP32_VID_PID,
-                        protocol=c.get("protocol", "yahboom"))
+                        protocol=c.get("protocol", "yahboom"),
+                        on_port_resolved=on_resolved)
                     node = WSEsp32Node(link=link)
                     self.link = link
                 else:
@@ -906,7 +915,8 @@ class RobotControlCore:
                                        baud=c.get("baud") or ESP32_DEFAULT_BAUD,
                                        telemetry=self.tel, cpr=c.get("cpr"),
                                        rx_prefix="esp32_",
-                                       protocol=c.get("protocol", "yahboom"))
+                                       protocol=c.get("protocol", "yahboom"),
+                                       on_port_resolved=on_resolved)
                 self.wsesp32 = node
             elif c["kind"] == "teensy":
                 self.teensy_port = c["port"]
@@ -917,7 +927,8 @@ class RobotControlCore:
                         c["port"], c.get("baud") or TEENSY_DEFAULT_BAUD,
                         telemetry=self.tel, cpr=c.get("cpr") or TEENSY_DEFAULT_CPR,
                         vid_pid=c.get("vid_pid") or TEENSY_VID_PID,
-                        protocol=c.get("protocol", "yahboom"))
+                        protocol=c.get("protocol", "yahboom"),
+                        on_port_resolved=on_resolved)
                     node = TeensyNode(link=link)
                     self.link = link
                 else:
@@ -927,7 +938,8 @@ class RobotControlCore:
                                       baud=c.get("baud") or TEENSY_DEFAULT_BAUD,
                                       telemetry=self.tel, cpr=c.get("cpr"),
                                       rx_prefix="teensy_",
-                                      protocol=c.get("protocol", "yahboom"))
+                                      protocol=c.get("protocol", "yahboom"),
+                                      on_port_resolved=on_resolved)
                 self.teensy = node
             else:
                 continue

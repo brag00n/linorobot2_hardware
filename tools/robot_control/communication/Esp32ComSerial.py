@@ -46,10 +46,10 @@ class Esp32ComSerial(RobotComSerial):
 
     def __init__(self, port="COM8", baud=ESP32_DEFAULT_BAUD, telemetry=None,
                  cpr=ESP32_DEFAULT_CPR, vid_pid=ESP32_VID_PID, rx_prefix="",
-                 protocol="yahboom", **codec_kwargs):
+                 protocol="yahboom", on_port_resolved=None, **codec_kwargs):
         super().__init__(port=port, baud=baud, telemetry=telemetry, cpr=cpr,
                          vid_pid=vid_pid, rx_prefix=rx_prefix, protocol=protocol,
-                         **codec_kwargs)
+                         on_port_resolved=on_port_resolved, **codec_kwargs)
 
     def _probe(self, port, timeout=2.5):
         """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames du protocole actif.
@@ -130,6 +130,7 @@ class Esp32ComSerial(RobotComSerial):
                 if self.tel:
                     self.tel.log("event", msg="com_open", port=cand,
                                  mode="auto", frames=ok)
+                self._notify_port_resolved(cand)   # COM change -> persiste le profil
                 return
         if self.tel:
             self.tel.log("event", msg="com_fail", err=self.last_err)

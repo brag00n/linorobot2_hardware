@@ -20,10 +20,15 @@ PRINCIPALE pour les chemins existants (bannieres, telemetrie, gateway MCP).
 """
 import json
 import os
+import threading
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROBOTS_DIR = os.path.join(_HERE, "robots")
 DEFAULT_ROBOT = "bamboo4WD_V4_YBStm32"
+
+# Les cartes d'un banc persistent leur port en parallele (threads lecteurs) ->
+# read-modify-write du meme fichier serialise.
+_PERSIST_LOCK = threading.Lock()
 
 
 def available():
@@ -43,6 +48,42 @@ def load(name):
             % (path, ", ".join(available()) or "aucun"))
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def persist_control_port(robot_name, kind, port):
+    """Reecrit le `port` de la carte de controle <kind> dans robots/<robot_name>.json.
+
+    Appele quand le scan d'auto-decouverte a trouve la carte sur un COM different
+    de celui configure (le port a change) : le prochain lancement retrouve alors la
+    carte instantanement sur son port prefere, sans repasser par le scan. Ne touche
+    QUE le champ `port` de l'entree <kind> ; best-effort (echec silencieux si profil
+    absent/illisible). Retourne True si le fichier a ete modifie.
+    """
+    if not robot_name:
+        return False
+    path = os.path.join(ROBOTS_DIR, f"{robot_name}.json")
+    with _PERSIST_LOCK:
+        try:
+            with open(path, encoding="utf-8") as f:
+                prof = json.load(f)
+        except (OSError, ValueError):
+            return False
+        ctrl = prof.get("control")
+        entries = ctrl if isinstance(ctrl, list) else ([ctrl] if ctrl else [])
+        changed = False
+        for c in entries:
+            if isinstance(c, dict) and c.get("kind") == kind and c.get("port") != port:
+                c["port"] = port
+                changed = True
+        if not changed:
+            return False
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(prof, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except OSError:
+            return False
+        return True
 
 
 def resolve(args):

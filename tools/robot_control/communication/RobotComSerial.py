@@ -36,9 +36,17 @@ class RobotComSerial:
     """Liaison serie non bloquante avec la carte. Reconnexion automatique."""
 
     def __init__(self, port="COM4", baud=115200, telemetry=None, cpr=DEFAULT_CPR,
-                 vid_pid=None, rx_prefix="", protocol="yahboom", **codec_kwargs):
+                 vid_pid=None, rx_prefix="", protocol="yahboom",
+                 on_port_resolved=None, **codec_kwargs):
         self.port = port
         self.baud = baud
+        # Callback appele quand le SCAN trouve la carte sur un port DIFFERENT du
+        # port configure (le COM a change depuis le profil) -> la couche appelante
+        # persiste le nouveau port dans le JSON. Signature : cb(nouveau_port:str).
+        self._on_port_resolved = on_port_resolved
+        # Port configure d'origine : reference pour detecter un changement de COM
+        # (mis a jour apres persistance pour ne pas re-notifier aux reconnexions).
+        self._configured_port = port
         self.tel = telemetry
         # Protocole de fil ("yahboom" par defaut, ou "mavlink") : selectionne le codec.
         self.protocol = (protocol or "yahboom").lower()
@@ -200,6 +208,19 @@ class RobotComSerial:
             pass
         return ok, None
 
+    def _notify_port_resolved(self, port):
+        """Le scan a identifie la carte sur <port> : si c'est un AUTRE COM que celui
+        configure, on remonte la decouverte (callback -> persistance JSON) et on
+        adopte ce port comme nouveau prefere (evite un re-scan aux reconnexions)."""
+        if port == self._configured_port:
+            return
+        self._configured_port = port
+        if self._on_port_resolved is not None:
+            try:
+                self._on_port_resolved(port)
+            except Exception as e:                 # persistance best-effort
+                self.last_err = str(e)
+
     def _open(self):
         # 1) port prefere : connexion INSTANTANEE, mais seulement si la carte
         #    presente sur ce COM porte le bon VID:PID (controle d'identite). Un COM
@@ -227,6 +248,7 @@ class RobotComSerial:
                 if self.tel:
                     self.tel.log("event", msg="com_open", port=cand,
                                  mode="auto", frames=ok)
+                self._notify_port_resolved(cand)   # COM change -> persiste le profil
                 return
         if self.tel:
             self.tel.log("event", msg="com_fail", err=self.last_err)

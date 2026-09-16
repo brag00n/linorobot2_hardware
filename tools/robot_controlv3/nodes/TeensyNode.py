@@ -27,7 +27,7 @@ class TeensyNode(Node):
     """Publie l'etat de la 3e carte de controle Teensy sur /teensy/telemetry."""
 
     def __init__(self, port="COM9", baud=115200, telemetry=None, cpr=None, link=None,
-                 rx_prefix="", protocol="yahboom"):
+                 rx_prefix="", protocol="yahboom", on_port_resolved=None):
         super().__init__("teensy")
         if link is not None:
             # lien injecte par le Core (Teensy = carte de controle principale) :
@@ -39,10 +39,12 @@ class TeensyNode(Node):
             # rx:speed/imu/encoder de la carte primaire dans le state.json/log.
             if cpr is None:
                 self.link = TeensyComSerial(port, baud, telemetry=telemetry,
-                                            rx_prefix=rx_prefix, protocol=protocol)
+                                            rx_prefix=rx_prefix, protocol=protocol,
+                                            on_port_resolved=on_port_resolved)
             else:
                 self.link = TeensyComSerial(port, baud, telemetry=telemetry, cpr=cpr,
-                                            rx_prefix=rx_prefix, protocol=protocol)
+                                            rx_prefix=rx_prefix, protocol=protocol,
+                                            on_port_resolved=on_port_resolved)
             self._owns_link = True
         self._out = self.create_output("/teensy/telemetry", TeensyTelemetry)
 
