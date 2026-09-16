@@ -116,7 +116,8 @@ def parse_args():
     ap.add_argument("--protocol", default=None, choices=["yahboom", "mavlink"],
                     help="protocole de fil des cartes de controle : yahboom (trames "
                          "binaires maison, historique) ou mavlink (v2, dialecte bamboo). "
-                         "Defaut : valeur du profil (yahboom). Surcharge TOUTES les cartes.")
+                         "Defaut : valeur du profil (mavlink pour les cartes de "
+                         "controle). Surcharge TOUTES les cartes.")
     # --- carte capteurs GrovePi+ (utilisee par robot_controlv3 ; ignoree ici) ---
     ap.add_argument("--grovepi-port", default=None,
                     help="port serie carte capteurs GrovePi+ (defaut : profil, COM6 ; "

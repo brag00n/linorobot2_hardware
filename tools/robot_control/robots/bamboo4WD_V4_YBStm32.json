@@ -6,12 +6,14 @@
     "vid_pid": ["1A86:7523"],
     "port": "COM7",
     "baud": 115200,
-    "cpr": 1320
+    "cpr": 1320,
+    "protocol": "mavlink"
   },
   "sensors": {
     "kind": "grovepi",
     "vid_pid": ["0403:6001"],
     "port": "COM6",
-    "baud": 115200
+    "baud": 115200,
+    "protocol": "yahboom"
   }
 }
