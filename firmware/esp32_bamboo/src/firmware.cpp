@@ -30,14 +30,16 @@
     #define ENABLE_CONNECTOR_WEB
 #endif // ENABLE_DEVICE_WIFI
 //#define ENABLE_MICRO_ROS
-// ENABLE_CONNECTOR_SERIAL_FRAME peut etre defini par build_flags (env serie) ; il est
-// exclusif de micro-ROS/ConnectorMicroROS (meme UART @921600). A defaut, on garde ROS.
-#ifndef ENABLE_CONNECTOR_SERIAL_FRAME
+// Transport de controle selectionne par build_flags (tous exclusifs : meme UART @921600) :
+//   -D ENABLE_CONNECTOR_SERIAL_FRAME -> trames binaires maison (ConnectorSerialFrame)
+//   -D ENABLE_MAVLINK                -> MAVLink v2 dialecte bamboo (ConnectorMavlink)
+//   (aucun des deux)                 -> micro-ROS (ConnectorMicroROS, defaut)
+#if !defined(ENABLE_CONNECTOR_SERIAL_FRAME) && !defined(ENABLE_MAVLINK)
     #define ENABLE_CONNECTOR_ROS
 #endif
-// Macro partagee : logique de controle (moveBase/publishData/callbacks) commune aux deux
-// connecteurs de controle (micro-ROS OU trames binaires), reutilisant le symbole connectorROS.
-#if defined(ENABLE_CONNECTOR_ROS) || defined(ENABLE_CONNECTOR_SERIAL_FRAME)
+// Macro partagee : logique de controle (moveBase/publishData/callbacks) commune aux trois
+// connecteurs de controle (micro-ROS, trames binaires OU MAVLink), reutilisant le symbole connectorROS.
+#if defined(ENABLE_CONNECTOR_ROS) || defined(ENABLE_CONNECTOR_SERIAL_FRAME) || defined(ENABLE_MAVLINK)
     #define ENABLE_CONNECTOR_CONTROL
 #endif
 
@@ -132,6 +134,8 @@
     #include "ConnectorMicroROS.hpp"
 #elif defined(ENABLE_CONNECTOR_SERIAL_FRAME)
     #include "ConnectorSerialFrame.hpp"
+#elif defined(ENABLE_MAVLINK)
+    #include "ConnectorMavlink.hpp"
 #endif // ENABLE_CONNECTOR_ROS
 
 #ifdef ENABLE_CONNECTOR_WEB
@@ -229,6 +233,9 @@ ConnectorMicroROS  connectorROS;
 // Reutilise le symbole connectorROS : toute la logique de controle (moveBase/publishData/
 // callbacks) reste inchangee, seul le transport diffère (trames binaires vs micro-ROS).
 ConnectorSerialFrame connectorROS;
+#elif defined(ENABLE_MAVLINK)
+// Meme reutilisation du symbole connectorROS pour le transport MAVLink v2 (dialecte bamboo).
+ConnectorMavlink connectorROS;
 #endif // ENABLE_CONNECTOR_ROS
 
 #ifdef ENABLE_CONNECTOR_WEB
@@ -456,12 +463,12 @@ void publishData()
     mag_msg.magnetic_field.z -= mag_bias[2];
 #endif
 #ifndef USE_FAKE_MAG
-  // Le connecteur trames binaires ignore l'en-tete (pas de type ROS Mag_t.header).
-  #if defined(ENABLE_CONNECTOR_CONTROL) && !defined(ENABLE_CONNECTOR_SERIAL_FRAME)
+  // Les connecteurs trames binaires / MAVLink ignorent l'en-tete (pas de type ROS Mag_t.header).
+  #if defined(ENABLE_CONNECTOR_CONTROL) && !defined(ENABLE_CONNECTOR_SERIAL_FRAME) && !defined(ENABLE_MAVLINK)
     struct timespec time_stamp = connectorROS.getTime();
     mag_msg.header.stamp.sec = time_stamp.tv_sec;
     mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-  #endif // ENABLE_CONNECTOR_CONTROL && !ENABLE_CONNECTOR_SERIAL_FRAME
+  #endif // ENABLE_CONNECTOR_CONTROL && !ENABLE_CONNECTOR_SERIAL_FRAME && !ENABLE_MAVLINK
 #endif // USE_FAKE_MAG
 #ifndef USE_FAKE_MAG
 
