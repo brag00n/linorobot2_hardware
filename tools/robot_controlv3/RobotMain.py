@@ -353,8 +353,10 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
 
     if _hmi(mcfg, "esp32_motor"):
         # vitesses mesurees (odometrie carte) : Vx m/s, Vz rad/s (Vy nul en differentiel)
-        vx = es.vx if present else 0.0
-        vz = es.vz if present else 0.0
+        # present peut etre vrai (HEARTBEAT recu) avant la 1re trame de vitesse
+        # (WHEEL_STATE en MAVLink) -> vx/vz encore None : on retombe sur 0.0.
+        vx = es.vx if (present and es.vx is not None) else 0.0
+        vz = es.vz if (present and es.vz is not None) else 0.0
         vcol = _C_ON if (present and (vx or vz)) else _C_OFF
         _row(frame, x, yc, [
             (10, "vitesse", _C_LABEL), (98, f"{vx:+.2f}m/s", vcol),
@@ -404,8 +406,10 @@ def _draw_teensy_card(frame, x, y, port_name, ts, mcfg=None):
 
     if _hmi(mcfg, "teensy_motor"):
         # vitesses mesurees (odometrie carte) : Vx m/s, Vz rad/s (Vy nul en differentiel)
-        vx = ts.vx if present else 0.0
-        vz = ts.vz if present else 0.0
+        # present peut etre vrai (HEARTBEAT recu) avant la 1re trame de vitesse
+        # (WHEEL_STATE en MAVLink) -> vx/vz encore None : on retombe sur 0.0.
+        vx = ts.vx if (present and ts.vx is not None) else 0.0
+        vz = ts.vz if (present and ts.vz is not None) else 0.0
         vcol = _C_ON if (present and (vx or vz)) else _C_OFF
         _row(frame, x, yc, [
             (10, "vitesse", _C_LABEL), (98, f"{vx:+.2f}m/s", vcol),
