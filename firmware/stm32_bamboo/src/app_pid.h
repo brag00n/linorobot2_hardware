@@ -70,4 +70,9 @@ void PID_Yaw_Reset(float yaw);
 float PID_Yaw_Calc(float NextPoint);
 void PID_Yaw_Set_Parm(float kp, float ki, float kd);
 
+/* Gains PID vivants (definis dans app_pid.c), exposes pour l'export PARAM_VALUE
+   du transport MAVLink : pid_motor[0..3] (Kp/Ki/Kd par moteur), pid_Yaw (cap). */
+extern motor_pid_t pid_motor[4];
+extern PID pid_Yaw;
+
 #endif /* __APP_PID_H__ */

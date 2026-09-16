@@ -8,6 +8,10 @@
 
 #include "app.h"
 
+#ifdef ENABLE_MAVLINK
+#include "mav_protocol.h"
+#endif
+
 #define ENABLE_USART1_DMA       1
 
 
@@ -168,7 +172,9 @@ void USART1_IRQHandler(void)
 	{
 		// Rx1_Temp = USART1->DR; //(USART1->DR)/(USART_ReceiveData(USART1));  //读取接收到的数据
 		Rx1_Temp = USART_ReceiveData(USART1);
-		#if PID_ASSISTANT_EN
+		#if defined(ENABLE_MAVLINK)
+		Mav_Receive_Byte(Rx1_Temp);
+		#elif PID_ASSISTANT_EN
 		protocol_data_recv(&Rx1_Temp, 1);
 		#else
 		Upper_Data_Receive(Rx1_Temp);

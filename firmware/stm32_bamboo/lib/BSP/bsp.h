@@ -28,7 +28,7 @@
 
 
 #define VERSION_MAJOR          0x03
-#define VERSION_MINOR          0x06
+#define VERSION_MINOR          0x07
 #define VERSION_PATCH          0x00
 
 

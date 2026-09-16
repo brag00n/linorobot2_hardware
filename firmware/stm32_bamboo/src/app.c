@@ -20,6 +20,10 @@
 #include "icm20948.h"
 #include "app_math.h"
 
+#ifdef ENABLE_MAVLINK
+#include "mav_protocol.h"
+#endif
+
 
 // 一个数表示十毫秒
 uint16_t g_update = 0;
@@ -90,6 +94,10 @@ void App_Init(void)
 	PID_Param_Init();
 	app_rgb_init();
 	Flash_Init();
+
+	#ifdef ENABLE_MAVLINK
+	Mav_Init();
+	#endif
 
 	#if ENABLE_CAR_SUNRISE_ONLY
 	Motion_Set_Car_Type(CAR_SUNRISE);
@@ -194,6 +202,9 @@ void vTask_Control(void *pvParameters)
 {
 	while (System_Enable())
 	{
+		#ifdef ENABLE_MAVLINK
+		Mav_Poll_Rx(0);
+		#else
 		if (Get_CMD_Flag())
 		{
 			Upper_Data_Parse(Get_RxBuffer(), Get_CMD_Length());
@@ -203,12 +214,16 @@ void vTask_Control(void *pvParameters)
 		{
 			Send_Request_Data();
 		}
+		#endif
 		SBUS_Handle();
 		App_Delay_ms(1);
 	}
 	g_system_init = 0;
 	while (1)
 	{
+		#ifdef ENABLE_MAVLINK
+		Mav_Poll_Rx(1); /* batterie faible : bloque cmd_vel/motor_pwm */
+		#else
 		if (Get_CMD_Flag())
 		{
 			Upper_Data_Parse_Low_Battery(Get_RxBuffer(), Get_CMD_Length());
@@ -218,6 +233,7 @@ void vTask_Control(void *pvParameters)
 		{
 			Send_Request_Data();
 		}
+		#endif
 		App_Delay_ms(1);
 	}
 }
@@ -231,6 +247,19 @@ void vTask_Auto_Report(void *pvParameters)
 	{
 		if (g_Auto_Report)
 		{
+			#ifdef ENABLE_MAVLINK
+			/* Telemetrie MAVLink : chaque flux a 25 Hz (cycle de 40 ms),
+			   HEARTBEAT decime a ~1 Hz. */
+			static uint8_t hb_div = 0;
+			if (report_count == 1)       Mav_Send_Wheel_State();
+			else if (report_count == 11) Mav_Send_Attitude();
+			else if (report_count == 21) Mav_Send_Encoders();
+			else if (report_count == 31) Mav_Send_Sys_Status();
+			else if (report_count == 5)
+			{
+				if (++hb_div >= 25) { hb_div = 0; Mav_Send_Heartbeat(); }
+			}
+			#else
 			if (report_count == 1)
 			{
 				Motion_Send_Data();
@@ -261,6 +290,7 @@ void vTask_Auto_Report(void *pvParameters)
 			{
 				Encoder_Send_Count_Now();
 			}
+			#endif
 		}
 		report_count++;
 		if (report_count > AUTO_SEND_TIMEOUT) report_count = 0;

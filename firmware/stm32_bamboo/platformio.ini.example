@@ -1,0 +1,104 @@
+; PlatformIO Project Configuration File -- TEMPLATE
+;
+;   Le vrai platformio.ini est gitignore (il contient un reglage machine :
+;   upload_port). Pour construire ce projet :
+;     1. Copiez ce fichier :  cp platformio.ini.example platformio.ini
+;     2. Ajustez upload_port sur le port serie CH340 de votre carte
+;        (Windows : Gestionnaire de peripheriques -> Ports COM & LPT).
+;   Ce template est la source de verite versionnee des ENVIRONNEMENTS de build ;
+;   gardez-le a jour quand vous ajoutez/modifiez un env.
+;
+;   Build options: build flags, source filter
+;   Upload options: custom upload port, speed and extra flags
+;   Library options: dependencies, extra library storages
+;   Advanced options: extra scripting
+;
+; https://docs.platformio.org/page/projectconf.html
+
+; ===========================================================================
+;  Choix du protocole de communication = choix de l'ENVIRONNEMENT de build.
+;
+;    pio run                              -> Yahboom (env par defaut, cf. default_envs)
+;    pio run -e genericSTM32F103RC        -> Yahboom (protocole binaire maison, historique)
+;    pio run -e genericSTM32F103RC_mavlink-> MAVLink v2 (dialecte bamboo)
+;
+;  La bascule se fait par le flag -DENABLE_MAVLINK : quand il est defini, le
+;  firmware utilise la pile MAVLink ; sinon le code Yahboom v1 reste actif
+;  (compile-out sous #ifndef ENABLE_MAVLINK). Rollback = rebuild l'env Yahboom.
+;  Le nom "genericSTM32F103RC" est conserve pour l'env historique afin que le
+;  chemin d'artefact .pio/build/genericSTM32F103RC/firmware.bin reste valable
+;  (iap_flash.py / MCP flash_firmware pointent dessus).
+; ===========================================================================
+[platformio]
+default_envs = genericSTM32F103RC
+
+; --- reglages communs aux deux environnements ---
+[common]
+platform = ststm32
+board = genericSTM32F103RC
+board_build.mcu = stm32f103rct6
+board_build.ldscript = STM32F103RC_FLASH.ld
+; Bare-metal build: this project ships its own CMSIS + StdPeriph (FWlib),
+; so no HAL framework is used.
+;
+; Flashing (YB-ERF01-V3.0 / Yahboom STM32 ROS board):
+;   The micro-USB "USB Connect" port goes through a CH340 USB-serial chip
+;   wired to USART1 (PA9/PA10).
+;
+;   NOMINAL (no buttons) -- IAP over UART via the resident bootloader:
+;     `pio run` then `python tools/iap_flash.py` (or the MCP flash_firmware
+;     tool). The app's 0xA3 command resets into the 16 KB bootloader which
+;     receives this firmware.bin and writes it to 0x08004000.
+;
+;   ONE-TIME / RECOVERY -- STM32 ROM serial bootloader (upload_protocol=serial):
+;     Needed only to install the resident bootloader itself (bootloader/), or
+;     to recover. Hold BOOT0, tap RESET, release BOOT0, then `pio run -t upload`
+;     (this env flashes the APP at 0x08004000; use the bootloader/ project to
+;     flash the bootloader at 0x08000000), then press RESET.
+;   NOTE: use the micro-USB port, NOT the USB-C port (that one is 5V OUTPUT).
+upload_protocol = serial
+; CH340 USB-serial port of the board (Windows Device Manager -> Ports COM & LPT).
+; Ajustez sur VOTRE port (ex. COM4, /dev/ttyUSB0).
+upload_port = COM4
+monitor_speed = 115200
+
+; SWD debug fallback (needs an ST-Link/J-Link probe on the SWD header):
+; debug_tool = stlink
+build_flags=
+    -Wl,-u,printf_float
+    -Wl,-Map,output.map
+    -O0
+    ; IAP : l'app est relogee a 0x08004000 (16 KB de bootloader en tete).
+    ; VECT_TAB_OFFSET repositionne SCB->VTOR dans SystemInit en consequence.
+    -DVECT_TAB_OFFSET=0x4000
+    -DMEMS_20648
+    -DMEMS_SECONDARY_DEVICE
+    -Ilib/FWlib/inc
+    -Ilib/FreeRTOS/inc
+    -Ilib/CMSIS
+    -Ilib/TOOL
+    -Ilib/BSP
+    -Ilib/DEBUG
+    -Ilib/MEMS
+    -Ilib/IAP
+    -Isrc
+    ; Dialecte MAVLink v2 genere (header-only, vendore). Inoffensif pour le
+    ; build Yahboom : aucun source ne l'inclut tant que ENABLE_MAVLINK n'est
+    ; pas defini. Chemin relatif au projet -> firmware/_common/...
+    -I../_common/protocol/mavlink/generated/c
+
+lib_ldf_mode = deep+
+lib_deps =
+    FWlib
+    FreeRTOS
+
+; --- Yahboom : protocole binaire maison [0xFF][ID][LEN][FUNC][payload][CHK] ---
+[env:genericSTM32F103RC]
+extends = common
+
+; --- MAVLink v2 : dialecte bamboo (HEARTBEAT/ATTITUDE/PARAM_*/COMMAND_* + BAMBOO_*) ---
+[env:genericSTM32F103RC_mavlink]
+extends = common
+build_flags =
+    ${common.build_flags}
+    -DENABLE_MAVLINK=1
