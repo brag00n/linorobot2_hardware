@@ -22,8 +22,9 @@
 
 // Version firmware de ce connecteur (board-id ESP32 distinct pour les logs hote)
 // 1.1.0 : orientation IMU (filtre complementaire) + emission magneto AK09918 (0x0B).
+// 1.2.0 : transport MAVLink v2 (dialecte bamboo) selectionnable via ENABLE_MAVLINK.
 #define WSF_VER_MAJOR 1
-#define WSF_VER_MINOR 1
+#define WSF_VER_MINOR 2
 #define WSF_VER_PATCH 0
 
 // --- funcodes (identiques a la STM32, cf. ros_monitor.py / RobotComSerial.py) ---
