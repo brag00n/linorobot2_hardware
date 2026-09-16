@@ -434,7 +434,7 @@ def _draw_teensy_card(frame, x, y, port_name, ts, mcfg=None):
 
 
 def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
-    """Carte GROVE (bas-droit) : 4 ultrasons (mm + barre) + IMU roll/pitch + bruts +
+    """Carte GROVE (bas-droit) : 4 ultrasons (mm + barre) + IMU roll/pitch +
     telemetre IR (distance + barre de proximite). Sous-blocs gates par groupe (HMI)."""
     present = bool(gp is not None and gp.connected)
     fresh = bool(present and gp.ultra_age is not None and gp.ultra_age < 1.5)
@@ -463,17 +463,15 @@ def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
                 cv2.rectangle(frame, (bx, cy - 9), (bx + fill, cy - 3), col, -1)
 
     if _hmi(mcfg, "grove_imu"):
-        # --- IMU : roll/pitch fusionnes + accel/gyro bruts --------------------
+        # --- IMU : roll/pitch fusionnes (filtre complementaire MPU6050) -------
+        # Les accel/gyro bruts (ex-lignes « brut a » / « g ») ne sont plus affiches :
+        # gyro non calibre sur cette carte -> valeurs tres bruitees, sans valeur ajoutee.
         iy = yc + 48
         roll = f"{gp.roll:+7.1f}" if (present and gp.roll is not None) else "     --"
         pitch = f"{gp.pitch:+7.1f}" if (present and gp.pitch is not None) else "     --"
         _row(frame, x, iy, [
             (10, "IMU roll", _C_LABEL), (95, roll, _C_IMU),
             (185, "pitch", _C_LABEL), (245, pitch, _C_IMU)])
-        a = ("%5d %5d %5d" % gp.accel) if (present and gp.accel is not None) else "--"
-        g = ("%5d %5d %5d" % gp.gyro) if (present and gp.gyro is not None) else "--"
-        _row(frame, x, iy + 19, [(10, "brut a", _C_LABEL), (72, a, _C_LABEL)])
-        _row(frame, x, iy + 38, [(10, "     g", _C_LABEL), (72, g, _C_LABEL)])
 
     if _hmi(mcfg, "grove_irdist"):
         # --- telemetre IR Sharp : distance seule + barre de proximite ---------

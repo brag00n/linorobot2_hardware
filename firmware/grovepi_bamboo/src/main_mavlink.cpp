@@ -7,7 +7,7 @@
  * maison. Selectionnee a la compilation par -D ENABLE_MAVLINK ; main.cpp est alors
  * neutralisee (#ifndef ENABLE_MAVLINK) et c'est ce fichier qui fournit setup()/loop().
  *
- * Telemetrie : SCALED_IMU + ATTITUDE (MPU6050), DISTANCE_SENSOR x5 (4 HC-SR04 id 0..3
+ * Telemetrie : ATTITUDE (MPU6050 roll/pitch), DISTANCE_SENSOR x5 (4 HC-SR04 id 0..3
  * + 1 Sharp IR id 4). Config : PARAM_* (enable/periode) + COMMAND_LONG PREFLIGHT_STORAGE
  * (EEPROM). Adressage sysid 4 / compid 1.
  */
@@ -74,9 +74,7 @@ static uint8_t storageAction(uint8_t action) {
 
 // --- Emission de la telemetrie (miroir des sendImu/sendUltra/sendIr) --------
 static void sendImu() {
-    mav.emitImu(imu.roll100(), imu.pitch100(),
-                imu.ax(), imu.ay(), imu.az(),
-                imu.gx(), imu.gy(), imu.gz());
+    mav.emitImu(imu.roll100(), imu.pitch100());
 }
 
 static void sendUltra() {

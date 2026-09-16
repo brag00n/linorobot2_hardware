@@ -48,12 +48,9 @@
 mavlink_system_t mavlink_system = { MAV_SYS_ID_GROVE, MAV_COMP_ID };
 #include "bamboo/mavlink.h"
 
-// --- Facteurs d'echelle MPU6050 (config par defaut +-2 g / +-250 deg/s) ---
-// SCALED_IMU attend accel en mg et gyro en mrad/s (entiers 16 bits).
-//   accel : 16384 LSB/g   -> mg   = lsb * 1000/16384
-//   gyro  : 131 LSB/deg/s -> mrad/s = lsb * (1000/131) * (PI/180)
-static const float ACC_LSB_TO_MG    = 1000.0f / 16384.0f;          // ~0.06104
-static const float GYR_LSB_TO_MRADS = (1000.0f / 131.0f) * (float)(M_PI / 180.0); // ~0.13323
+// --- Facteur d'echelle MPU6050 (config par defaut +-2 g / +-250 deg/s) ---
+// ATTITUDE attend roll/pitch en radians ; le filtre complementaire les fournit
+// en centi-degres (roll100/pitch100) -> conversion rad = deg100 * (PI/180) / 100.
 static const float DEG100_TO_RAD    = (float)(M_PI / 180.0) / 100.0f;
 
 // ======================================================================= //
@@ -130,24 +127,16 @@ void MavSensors::sendHeartbeat() {
                                MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
 }
 
-void MavSensors::emitImu(int16_t roll100, int16_t pitch100,
-                         int16_t ax, int16_t ay, int16_t az,
-                         int16_t gx, int16_t gy, int16_t gz) {
+void MavSensors::emitImu(int16_t roll100, int16_t pitch100) {
     // ATTITUDE : roll/pitch (rad) du filtre complementaire. Pas de magneto (MPU6050)
     // -> yaw = 0 et rates non exposes par ce filtre -> 0 (yaw RELATIF, caveat MPU6050).
+    // On n'emet PLUS SCALED_IMU (#26, accel/gyro bruts) : gyro non debiaise (aucune
+    // calibration sur cette carte) donc valeurs tres bruitees, non consommees par
+    // l'hote -> retirees de la telemetrie (economie de bande passante).
     mavlink_msg_attitude_send(MAVLINK_COMM_0, millis(),
                               roll100  * DEG100_TO_RAD,
                               pitch100 * DEG100_TO_RAD,
                               0.0f, 0.0f, 0.0f, 0.0f);
-    // SCALED_IMU : accel (mg), gyro (mrad/s), magneto absente -> 0, temperature 0.
-    mavlink_msg_scaled_imu_send(MAVLINK_COMM_0, millis(),
-                                (int16_t)(ax * ACC_LSB_TO_MG),
-                                (int16_t)(ay * ACC_LSB_TO_MG),
-                                (int16_t)(az * ACC_LSB_TO_MG),
-                                (int16_t)(gx * GYR_LSB_TO_MRADS),
-                                (int16_t)(gy * GYR_LSB_TO_MRADS),
-                                (int16_t)(gz * GYR_LSB_TO_MRADS),
-                                0, 0, 0, 0);
 }
 
 void MavSensors::emitDistance(uint8_t id, uint16_t mm, bool infrared) {

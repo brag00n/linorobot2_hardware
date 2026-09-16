@@ -19,9 +19,9 @@
 //
 // Telemetrie emise :
 //   HEARTBEAT (#0, ~1 Hz)      : presence, MAV_TYPE_ONBOARD_CONTROLLER (carte auxiliaire)
-//   SCALED_IMU (#26)           : accel (mg) + gyro (mrad/s) bruts MPU6050  <- ex 0x60
 //   ATTITUDE (#30)             : roll/pitch (rad) du filtre complementaire  <- ex 0x60
 //   DISTANCE_SENSOR (#132) x5  : 4 HC-SR04 (id 0..3) + 1 Sharp IR (id 4)    <- ex 0x61/0x62
+// (SCALED_IMU #26 accel/gyro bruts retire : gyro non calibre -> bruite, inutilise cote hote.)
 // Commandes acceptees :
 //   PARAM_REQUEST_LIST/READ, PARAM_SET : table DeviceConfig (enable/periode)  <- ex 0x54/0x55
 //   COMMAND_LONG PREFLIGHT_STORAGE     : commit/defauts/reload EEPROM         <- ex 0x56
@@ -40,9 +40,7 @@ class MavSensors {
     void poll();   // vide l'UART entrant + route ; HEARTBEAT ~1 Hz
 
     // --- emission de la telemetrie (appelee par la loop, miroir des sendImu/Ultra/Ir) ---
-    void emitImu(int16_t roll100, int16_t pitch100,
-                 int16_t ax, int16_t ay, int16_t az,
-                 int16_t gx, int16_t gy, int16_t gz);          // ATTITUDE + SCALED_IMU
+    void emitImu(int16_t roll100, int16_t pitch100);           // ATTITUDE (roll/pitch)
     void emitDistance(uint8_t id, uint16_t mm, bool infrared); // DISTANCE_SENSOR (mm->cm)
 
   private:
