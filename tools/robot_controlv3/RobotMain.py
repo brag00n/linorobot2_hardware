@@ -66,9 +66,13 @@ from robot_control.mcp import gateway
 from .roslite import Executor
 from .metrics import MetricsConfig
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
-                    WSEsp32Node, TeensyNode, FaceRecogNode, FaceTrainNode)
+                    GamepadNode, WSEsp32Node, TeensyNode, FaceRecogNode, FaceTrainNode)
+from .nodes.GamepadNode import (
+    AX_LX, AX_LY, AX_RX, AX_RY, AX_LT, AX_RT,
+    BTN_A, BTN_B, BTN_X, BTN_Y, BTN_LB, BTN_RB, BTN_BACK, BTN_START, BTN_L3, BTN_R3,
+    HAT_DPAD)
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
-                   ServoState, GrovePiTelemetry, Esp32Telemetry, RecognitionConfig,
+                   ServoState, GrovePiTelemetry, Esp32Telemetry, JoyMsg, RecognitionConfig,
                    RecognitionResult, TrainState)
 
 
@@ -821,6 +825,7 @@ class RobotControlCore:
         self.teensy = None                       # node 3e carte de controle Teensy (optionnel)
         self.teensy_port = None                  # port Teensy pour l'etiquette carte HUD (ou None)
         self.grovepi = None                      # node carte capteurs GrovePi+ (optionnel)
+        self.gamepad = None                      # node manette de jeu (optionnel)
         self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.train = None                        # node dedie a l'apprentissage (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
@@ -834,6 +839,13 @@ class RobotControlCore:
         self._hold_prev = (0, 0)     # dernier (fwd, turn) sonde -> republication immediate au changement
         self._servo_seq = 0          # sequence des ServoCmd clavier (messages discrets)
         self._recog_seq = 0          # sequence des commandes reco ponctuelles (train/fichier)
+
+        # --- etat manette (detection de fronts : une action par appui) ----------
+        self._gp_prev_buttons = ()   # dernier vecteur de boutons (0/1) vu sur /joy
+        self._gp_prev_hat = (0, 0)   # dernier etat de la croix directionnelle
+        self._gp_prev_trig = (0, 0)  # dernier etat (enfonce 0/1) des gachettes ZL/ZR
+        self._gp_seq = -1            # derniere trame /joy traitee pour les boutons
+        self._gp_driving = False     # la manette pilotait au tour precedent (edge stop)
 
         self._disp_t0 = 0.0
         self._disp_n = 0
@@ -956,6 +968,16 @@ class RobotControlCore:
                                        vid_pid=sensors.get("vid_pid"),
                                        protocol=sensors.get("protocol", "yahboom"))
 
+        # 3b) manette de jeu (teleop portable pygame) : optionnelle, utile meme en
+        #     --board-only (pilotage sans camera). Absente/pygame manquant -> node
+        #     inerte (connected=False), le Core force alors un stop (securite).
+        gamepad = getattr(args, "gamepad", None)
+        if gamepad and gamepad.get("enabled", True):
+            self.gamepad = GamepadNode(index=gamepad.get("index", 0),
+                                       deadzone=gamepad.get("deadzone", 0.12),
+                                       expo=gamepad.get("expo", 0.35),
+                                       probe=bool(getattr(args, "gamepad_probe", False)))
+
         # 4) nodes + executeur : en --board-only, seules les cartes (ni cam ni suivi)
         self.executor = Executor()
         if self.board_only:
@@ -963,6 +985,8 @@ class RobotControlCore:
                 self.executor.add_node(node)
             if self.grovepi is not None:
                 self.executor.add_node(self.grovepi)
+            if self.gamepad is not None:
+                self.executor.add_node(self.gamepad)
         else:
             self.camera = CameraNode(args, telemetry=self.tel)
             self.tracking = TrackingNode(args, telemetry=self.tel)
@@ -976,6 +1000,8 @@ class RobotControlCore:
                      self.servo] + control_nodes
             if self.grovepi is not None:
                 nodes.append(self.grovepi)
+            if self.gamepad is not None:
+                nodes.append(self.gamepad)
             for node in nodes:
                 self.executor.add_node(node)
         self.executor.start()                    # ouvre camera (non fatal) + detecteur + P2
@@ -1135,6 +1161,149 @@ class RobotControlCore:
                 self._cmdvel_t0 = time.time()
             self._hold_prev = (fwd, turn)
 
+    # -----------------------------------------------------------------------
+    # Manette de jeu (/joy) : jumeau du clavier, en cohabitation
+    # -----------------------------------------------------------------------
+    def _axis(self, axes, idx):
+        """Lit l'axe `idx` (float [-1,1]), applique zone morte + expo -> [-1,1].
+        Hors zone morte, renormalise puis courbe l'expo (finesse au centre, pleine
+        echelle au bord). En deca de la zone morte : 0 (pas de derive au repos)."""
+        v = float(axes[idx]) if 0 <= idx < len(axes) else 0.0
+        dz = self.gamepad.deadzone
+        m = abs(v)
+        if m <= dz:
+            return 0.0
+        s = (m - dz) / (1.0 - dz)                 # renormalise l'amplitude utile
+        e = self.gamepad.expo
+        s = (1.0 - e) * s + e * (s ** 3)          # expo : doux au centre
+        return s if v >= 0 else -s
+
+    def _drive_from_gamepad(self, joy):
+        """Pilotage analogique par le stick gauche (poussee = vitesse), en cohabitation
+        avec le clavier. La manette ne prend la main que lorsqu'elle est POUSSEE : au
+        relachement (ou deconnexion) elle emet un STOP franc une fois puis rend la main
+        (le clavier peut alors piloter). Manette absente = aucune ingerence."""
+        driving = False
+        fwd = turn = 0.0
+        connected = (joy is not None and joy.connected and self.motion_on)
+        if connected:
+            fwd = -self._axis(joy.axes, AX_LY)    # avant = stick vers le haut (LY < 0)
+            turn = -self._axis(joy.axes, AX_LX)   # gauche = + (angular.z anti-horaire)
+            driving = (fwd != 0.0 or turn != 0.0)
+        if driving:
+            self.motion.holdVelocityAnalog(fwd, turn)
+            if not self._gp_driving:              # front montant : demarrage franc
+                self.motion.publish()
+                self._cmdvel_t0 = time.time()
+            self._gp_driving = True
+        elif self._gp_driving:                    # front descendant / deconnexion : stop franc
+            self.motion.holdVelocityAnalog(0.0, 0.0)
+            if self.motion_on:
+                self.motion.stop()                # cmd_vel(0,0) x3 -> Motion_Stop
+            self._gp_driving = False
+            self._hold_prev = (0, 0)              # resynchronise l'etat de tenue clavier
+
+    def _gamepad_buttons(self, joy):
+        """Actions manette a FRONT MONTANT (une par appui) + camera au stick droit.
+        Reprend les memes branches que _process_key : chaque bouton equivaut a sa touche.
+        Ne traite chaque trame /joy qu'une fois (garde sur seq)."""
+        if joy is None or not joy.connected:
+            # deconnexion : oublie l'etat pour ne pas rejouer d'edges au retour
+            self._gp_prev_buttons = ()
+            self._gp_prev_hat = (0, 0)
+            self._gp_prev_trig = (0, 0)
+            return
+        if joy.seq == self._gp_seq:               # deja traitee (bus profondeur 1)
+            return
+        self._gp_seq = joy.seq
+        btn = joy.buttons
+        prev = self._gp_prev_buttons
+
+        def pressed(i):                           # front montant du bouton i
+            return (i < len(btn) and btn[i]
+                    and not (i < len(prev) and prev[i]))
+
+        # --- deplacement / securite ---------------------------------------
+        if pressed(BTN_B):                        # B : STOP immediat (equiv. Espace)
+            self.motion.stop()
+        if pressed(BTN_L3):                       # clic stick G : armer/desarmer (equiv. O)
+            self.motion_on = not self.motion_on
+            if not self.motion_on:
+                self.motion.stop()
+            self.tel.log("event", msg="motion", on=self.motion_on, source="gamepad")
+            print(f"Moteurs {'ACTIFS' if self.motion_on else 'desactives'}")
+
+        # --- plage de vitesse : +/- (plancher) ; gachettes ZL/ZR (plafond) --
+        if pressed(BTN_START):                    # + : vitesse min +1
+            self.motion.bumpSpeedMin(+1)
+        if pressed(BTN_BACK):                     # - : vitesse min -1
+            self.motion.bumpSpeedMin(-1)
+        trig = (1 if self._axis_raw(joy.axes, AX_LT) > 0.5 else 0,
+                1 if self._axis_raw(joy.axes, AX_RT) > 0.5 else 0)
+        if trig[0] and not self._gp_prev_trig[0]:  # ZL : vitesse max -1
+            self.motion.bumpSpeedMax(-1)
+        if trig[1] and not self._gp_prev_trig[1]:  # ZR : vitesse max +1
+            self.motion.bumpSpeedMax(+1)
+        self._gp_prev_trig = trig
+
+        # --- vision / modes (equivalents clavier F/R/A/T/P/M/G) ------------
+        if pressed(BTN_X):                        # X : suivi on/off (equiv. F)
+            self.active = not self.active
+            self._publish_cfg()
+            self.tel.log("event", msg="tracking", on=self.active, source="gamepad")
+        if pressed(BTN_Y) and self.recognition is not None:   # Y : reconnaissance (equiv. R)
+            cur = self.recognition.mode
+            self._publish_recog(mode="off" if cur != "off" else "recognition")
+        if pressed(BTN_A) and self.recognition is not None:   # A : acquisition (equiv. A)
+            cur = self.recognition.mode
+            self._publish_recog(mode="recognition" if cur == "acquisition" else "acquisition")
+        if pressed(BTN_LB) and self.tracking is not None:     # LB : cycle tracker (equiv. T)
+            cyc = self.tracking.webcam.availableTrackers()
+            if cyc:
+                cur = self.tracking.webcam.trackMode
+                i = cyc.index(cur) if cur in cyc else -1
+                self._publish_cfg(track_mode=cyc[(i + 1) % len(cyc)])
+        if pressed(BTN_RB) and self.tracking is not None:     # RB : cycle prediction (equiv. P)
+            cur = self.tracking.webcam.predict_mode
+            i = PREDICT_MODES.index(cur) if cur in PREDICT_MODES else 0
+            self._publish_cfg(predict_mode=PREDICT_MODES[(i + 1) % len(PREDICT_MODES)])
+
+        # --- croix directionnelle (D-pad) : taille cible / detecteur / train
+        hat = joy.hats[HAT_DPAD] if HAT_DPAD < len(joy.hats) else (0, 0)
+        ph = self._gp_prev_hat
+        if hat[0] == 1 and ph[0] != 1:            # D-pad droite : cible + (equiv. +)
+            self._resize_target(+TARGET_STEP)
+        if hat[0] == -1 and ph[0] != -1:          # D-pad gauche : cible - (equiv. -)
+            self._resize_target(-TARGET_STEP)
+        if hat[1] == 1 and ph[1] != 1 and self.tracking is not None:   # haut : detecteur (equiv. M)
+            cyc = self.tracking.webcam.availableDetectors()
+            if cyc:
+                cur = self.tracking.webcam.detector
+                i = cyc.index(cur) if cur in cyc else -1
+                self._publish_cfg(detector=cyc[(i + 1) % len(cyc)])
+        if hat[1] == -1 and ph[1] != -1 and self.recognition is not None:  # bas : train (equiv. G)
+            self._publish_recog(command="train")
+            self.tel.log("event", msg="train_request", source="gamepad")
+        self._gp_prev_hat = hat
+
+        # --- camera au stick droit (nudges continus proportionnels a la poussee) -
+        if self.servo is not None:
+            pan = self._axis(joy.axes, AX_RX)     # droite = + (comme fleche droite)
+            tilt = -self._axis(joy.axes, AX_RY)   # stick haut = tilt + (comme fleche haut)
+            if pan != 0.0:
+                self._publish_servo("nudge_pan", SERVO_STEP * pan)
+            if tilt != 0.0:
+                self._publish_servo("nudge_tilt", SERVO_STEP * tilt)
+        if pressed(BTN_R3):                       # clic stick D : recentrer (equiv. C)
+            self._publish_servo("center")
+
+        self._gp_prev_buttons = tuple(btn)
+
+    @staticmethod
+    def _axis_raw(axes, idx):
+        """Valeur brute de l'axe (sans zone morte) : gachettes ZL/ZR en detection de front."""
+        return float(axes[idx]) if 0 <= idx < len(axes) else -1.0
+
     def _process_key(self, key, now):
         """Traite une touche. Retourne (quit, moved_now)."""
         k = key & 0xFF
@@ -1261,11 +1430,20 @@ class RobotControlCore:
         print("En ecoute (board-only). Ctrl-C pour quitter.")
         self._hb_t0 = time.time()
         while True:
-            self.executor.spin_once()            # BoardNode (+GrovePi) : lit la telemetrie
+            self.executor.spin_once()            # BoardNode (+GrovePi +manette) : lit la telemetrie
             self.server.drain()                  # execute les commandes carte MCP
             snap = _board_snap(self.executor.latest("/board/telemetry"))
             gp = self.executor.latest("/grovepi/telemetry")
             now2 = time.time()
+            # manette : pilotage sans camera (stick gauche + B/L3/+-/ZL/ZR seulement ;
+            #           vision/servo absents en board-only -> branches gardees no-op).
+            if self.gamepad is not None:
+                joy = self.executor.latest("/joy")
+                self._drive_from_gamepad(joy)
+                self._gamepad_buttons(joy)
+                if self.motion_on and (now2 - self._cmdvel_t0) >= CMDVEL_PERIOD_S:
+                    self.motion.publish()        # ~10 Hz : nourrit le watchdog cmd_vel
+                    self._cmdvel_t0 = now2
             if now2 - self._hb_t0 >= 2.0:
                 self._hb_t0 = now2
                 rpm = snap.get("rpm")
@@ -1312,6 +1490,7 @@ class RobotControlCore:
             gp = self.executor.latest("/grovepi/telemetry")
             es = self.executor.latest("/wsesp32/telemetry")
             ts = self.executor.latest("/teensy/telemetry")
+            joy = self.executor.latest("/joy")
             recog = self.executor.latest("/recognition/result")
 
             # 4) cadence d'affichage
@@ -1406,6 +1585,12 @@ class RobotControlCore:
             # 10) tenue des fleches : sonde l'etat physique -> etat cmd_vel (presser=bouger,
             #     relacher=stop) ; republication immediate au changement (start/stop francs).
             self._drive_from_arrows()
+
+            # 10b) manette : le stick gauche prend la main quand il est pousse (sinon rend
+            #      la main au clavier) ; boutons/croix/gachettes = actions a front montant.
+            if self.gamepad is not None:
+                self._drive_from_gamepad(joy)
+                self._gamepad_buttons(joy)
 
             # 11) republieur cmd_vel ~10 Hz : entretient l'etat de mouvement (modele ROS)
             #     et nourrit le watchdog cmd_vel firmware. A l'arret (etat 0) on emet
