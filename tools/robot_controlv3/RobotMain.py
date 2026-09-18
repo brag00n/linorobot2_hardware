@@ -1459,6 +1459,14 @@ class RobotControlCore:
                                  {"dist": gp.ir_dist, "adc": gp.ir_adc,
                                   "age": None if gp.ir_age is None else round(gp.ir_age, 2)},
                                  cfg=self.mcfg)
+                if self.gamepad is not None:
+                    self.tel.set("gamepad_input_actuator",
+                                 {"connected": bool(joy and joy.connected),
+                                  "name": joy.name if joy else "",
+                                  "driving": self._gp_driving,
+                                  "speed_min": self.motion.speedMinLevel,
+                                  "speed_max": self.motion.speedMaxLevel},
+                                 cfg=self.mcfg)
             time.sleep(0.02)
 
     def _loop(self):
@@ -1636,6 +1644,15 @@ class RobotControlCore:
             self.tel.set("grove_irdist_sensor",
                          {"dist": gp.ir_dist, "adc": gp.ir_adc,
                           "age": None if gp.ir_age is None else round(gp.ir_age, 2)},
+                         cfg=mc)
+        if self.gamepad is not None:
+            joy = self.executor.latest("/joy")
+            self.tel.set("gamepad_input_actuator",
+                         {"connected": bool(joy and joy.connected),
+                          "name": joy.name if joy else "",
+                          "driving": self._gp_driving,
+                          "speed_min": self.motion.speedMinLevel,
+                          "speed_max": self.motion.speedMaxLevel},
                          cfg=mc)
 
     def _shutdown(self):

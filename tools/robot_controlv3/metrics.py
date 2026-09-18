@@ -48,6 +48,7 @@ REGISTRY = {
     "grove_irdist":  ("sensor",   "info"),
     "recog_badge":   ("quality",  "info"),
     "train_log":     ("event",    "info"),
+    "gamepad_input": ("actuator", "info"),
 }
 
 

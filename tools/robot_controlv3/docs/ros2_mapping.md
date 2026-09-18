@@ -21,7 +21,7 @@ répartir les « E/S » actuelles sur **quatre** primitives distinctes.
 | Commande ponctuelle (motif `seq`) | `ServoCmd` center/nudge, `RecognitionConfig.command` | **Service** (`.srv`, req/rép) |
 | Tâche longue avec avancement | `train` + `/recognition/train_state` | **Action** (`.action`, goal/feedback/result) |
 | Ressource matérielle partagée | `link` série STM32 (BoardNode **et** ServoNode) | **1 node driver** unique (§5) |
-| Edges externes | clavier, socket MCP, disque `faces/` | node teleop / outils natifs / FS |
+| Edges externes | clavier, manette (`/joy`), socket MCP, disque `faces/` | node teleop / `joy_node` / outils natifs / FS |
 
 ## 2. Topics → types de messages ROS2
 
@@ -36,6 +36,7 @@ répartir les « E/S » actuelles sur **quatre** primitives distinctes.
 | `/recognition/result` | `RecognitionResult` | `RecognitionResult` (custom) | pas d'équivalent std direct |
 | `/servo/cmd` (cible suivi) | `ServoCmd(kind="track", nx, ny)` | `geometry_msgs/PointStamped` | **seule la cible reste un topic** |
 | `/servo/cmd` (center/nudge/home) | `ServoCmd(kind="center"/"nudge_*")` | **Service** (§3) | commandes ponctuelles |
+| `/joy` | `JoyMsg(axes, buttons, hats, connected, name, seq)` | `sensor_msgs/Joy` | mapping 1:1 (`axes`/`buttons`); `seq`+stamp → `header`; QoS *sensor_data* |
 
 ## 3. Config : comment ROS2 la gère
 
@@ -48,6 +49,7 @@ Les 3 canaux actuels (args CLI, clavier, socket MCP) se répartissent ainsi :
 | Commandes ponctuelles (`center` C, nudge, `recognize_file`, `acquire_file`, switch caméra V) | touches + MCP | **Services** (`.srv`) | `ros2 service call …`; supprime le motif `seq` |
 | Apprentissage (`train` G) | touche + MCP | **Action** (`.action`) | feedback = lignes de `TrainState`; result = `summary`; annulable |
 | Pilotage moteur clavier (flèches, vitesse) | `_process_key` (Core) | **node teleop** → `geometry_msgs/Twist` sur `/cmd_vel` | ≈ `teleop_twist_keyboard` |
+| Pilotage moteur manette (sticks, boutons) | `GamepadNode`→`/joy`, `_drive_from_gamepad`/`_gamepad_buttons` (Core) | **`joy_node`** → `/joy`, **`teleop_twist_joy`** → `/cmd_vel` | mapping arcade; boutons = params/services std |
 | Interface MCP (socket 8787) | `gateway.CommandServer` | **redondant** → `ros2 topic/param/service`, rqt (ou fin node-pont) | le gateway disparaît |
 
 ## 4. Récap par node en interfaces ROS2
@@ -59,6 +61,7 @@ Les 3 canaux actuels (args CLI, clavier, socket MCP) se répartissent ainsi :
 | **ServoNode** | `target` (`PointStamped`) | `joint_states` | gains, limites, deadzone… | `center` (`Trigger`), `nudge` (`Nudge`) | **écrit sur le série STM32** → §5 |
 | **BoardNode** | `/cmd_vel` (`Twist`), servo | `battery`, `imu`, `twist` (**stamp = ts carte**) | cpr, port, baud | — | **= driver STM32** (lecture+écriture) |
 | **GrovePiNode** | — | `range`×4, `imu`, `ir` | port, baud | — | driver série propre (port distinct → OK) |
+| **GamepadNode** | — | `joy` (`sensor_msgs/Joy`) | index, deadzone, expo | — | ≈ `joy_node` std; le Core = `teleop_twist_joy` (`/joy`→`/cmd_vel`) |
 | **FaceRecogNode** | `image`, `detections`, `train_state` | `recognition` (custom) | faces_dir, seuils, mode (+callback) | `recognize_file`, `acquire_file` (`.srv`) | écritures disque = effet de bord |
 | **FaceTrainNode** | *(goal d'action)* | `train_state` → **feedback d'action** | seuils, min_imgs | **`train` (`TrainFaces.action`)** | worker thread → serveur d'action |
 

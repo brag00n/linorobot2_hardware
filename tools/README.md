@@ -58,7 +58,8 @@ robot_controlv3/
   msgs.py               types de messages (@dataclass = futurs .msg)
   roslite/              Node + Port (file profondeur 1) + Executor (bus, spin_once)
   nodes/                CameraNode, TrackingNode, ServoNode, BoardNode,
-                        GrovePiNode, FaceRecogNode, FaceTrainNode
+                        WSEsp32Node, TeensyNode, GrovePiNode, GamepadNode,
+                        FaceRecogNode, FaceTrainNode
 ```
 
 Fonctions caracteristiques de chaque node (l'algorithme reste porte par le code) :
@@ -68,7 +69,14 @@ Fonctions caracteristiques de chaque node (l'algorithme reste porte par le code)
   (off/anticip/coast), zone morte carree, verrou d'episode (`lock_id`/`lock_age`).
 - **ServoNode** — pilotage des servos pan/tilt avec lissage (slew).
 - **BoardNode** — liaison serie STM32 (protocole trames).
+- **WSEsp32Node** — liaison serie ESP32 WaveShare (trames binaires / MAVLink).
+- **TeensyNode** — liaison serie Teensy (trames binaires / MAVLink).
 - **GrovePiNode** — acquisition capteurs (MPU6050 + 4 HC-SR04).
+- **GamepadNode** — manette de jeu (pygame/SDL, portable Linux/RPi) : lit axes/boutons/hat
+  et publie `/joy` (calque `sensor_msgs/Joy`). Le Core traduit le stick gauche en `cmd_vel`
+  (vitesse proportionnelle a la poussee), le stick droit en pan/tilt, les boutons en modes.
+  Manette **Under Control 2919** (tierce Switch) ou toute manette XInput/Xbox ; appairage BT
+  en maintenant **Home+X** au demarrage (mode XInput). Import optionnel : absente -> app OK sans manette.
 - **FaceRecogNode** — reconnaissance du visage suivi par embeddings SFace + galerie ;
   **stabilisation de la reconnaissance en appliquant un lissage EMA + une hysteresis a
   deux seuils par episode** (anti-flicker) ; **metrique de stabilite** de reconnaissance
@@ -87,7 +95,7 @@ Les nodes **composent par import** les classes de couche de `robot_control`
 (`RobotSensorWebCam`, `RobotWebCamMotorized`, `RobotServoMotor`, `RobotComSerial`) :
 detection, Kalman, slew servo, protocole serie **inchanges**. Topics :
 `/camera/image`, `/tracking/config`, `/tracking/result`, `/tracking/metrics`,
-`/servo/cmd`, `/servo/state`, `/board/telemetry`, `/grovepi/telemetry`,
+`/servo/cmd`, `/servo/state`, `/board/telemetry`, `/grovepi/telemetry`, `/joy`,
 `/recognition/config`, `/recognition/result`, `/recognition/train_state`.
 
 ```powershell
