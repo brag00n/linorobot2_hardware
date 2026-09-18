@@ -15,6 +15,7 @@ Graphe des topics (voir RobotMain) :
   /wsesp32/telemetry Esp32Telemetry  WSEsp32 -> Core          (carte ESP32 WaveShare, meme protocole)
   /teensy/telemetry  TeensyTelemetry Teensy  -> Core          (3e carte Teensy, meme protocole, sans magneto)
   /grovepi/telemetry GrovePiTelemetry GrovePi -> Core          (ultrasons + IMU, liaison)
+  /joy               JoyMsg          Gamepad -> Core          (manette : axes+boutons+croix)
 """
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple, List
@@ -270,3 +271,23 @@ class GrovePiTelemetry:
     ir_age: Optional[float] = None
     ok: int = 0
     bad: int = 0
+
+
+@dataclass
+class JoyMsg:
+    """Etat brut d'une manette de jeu (GamepadNode -> Core), calque sensor_msgs/Joy.
+
+    Publie une image instantanee de la manette a chaque tour : `axes` (floats bruts
+    ∈ [-1, 1], sticks + gachettes, indices selon le mapping XInput du GamepadNode),
+    `buttons` (0/1) et `hats` (croix directionnelle, tuples (x, y) ∈ {-1, 0, 1}). La
+    zone morte et l'expo sont appliquees cote Core (pas ici) pour rester un publieur
+    d'entree pur. `connected` = manette ouverte et lue (False = absente/deconnectee
+    -> le Core force un stop, securite par relachement). `name` = nom SDL du
+    peripherique (info/HUD). `seq` = compteur de trames (diagnostic).
+    """
+    seq: int = 0
+    connected: bool = False
+    name: str = ""
+    axes: Tuple[float, ...] = ()
+    buttons: Tuple[int, ...] = ()
+    hats: Tuple[Tuple[int, int], ...] = ()

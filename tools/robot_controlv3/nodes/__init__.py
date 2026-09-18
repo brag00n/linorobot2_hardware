@@ -11,8 +11,10 @@ from .BoardNode import BoardNode
 from .WSEsp32Node import WSEsp32Node
 from .TeensyNode import TeensyNode
 from .GrovePiNode import GrovePiNode
+from .GamepadNode import GamepadNode
 from .FaceRecogNode import FaceRecogNode
 from .FaceTrainNode import FaceTrainNode
 
 __all__ = ["CameraNode", "TrackingNode", "ServoNode", "BoardNode",
-           "WSEsp32Node", "TeensyNode", "GrovePiNode", "FaceRecogNode", "FaceTrainNode"]
+           "WSEsp32Node", "TeensyNode", "GrovePiNode", "GamepadNode",
+           "FaceRecogNode", "FaceTrainNode"]
