@@ -124,6 +124,21 @@ def parse_args():
                          "scan auto si absent). Utilise par robot_controlv3")
     ap.add_argument("--no-grovepi", action="store_true",
                     help="ne pas connecter la carte capteurs GrovePi+ (robot_controlv3)")
+    # --- manette de jeu (teleop portable pygame, utilisee par robot_controlv3) ---
+    # Manette de reference : Under Control 2919 (manette tierce Switch) ou toute
+    # manette XInput/Xbox. Appairage Bluetooth (mode XInput OBLIGATOIRE pour etre vue
+    # du PC) : eteindre (Home appui long), rallumer en maintenant Home+X jusqu'au
+    # clignotement, puis Windows -> Bluetooth -> Ajouter un appareil. En mode Switch,
+    # Windows ne la voit pas. Sous Linux/RPi : idem via bluetoothctl (lue par pygame/SDL).
+    ap.add_argument("--no-gamepad", action="store_true",
+                    help="ne pas activer la manette de jeu (robot_controlv3)")
+    ap.add_argument("--gamepad-index", type=int, default=None,
+                    help="numero de manette SDL a ouvrir (defaut : profil, 0 = premiere)")
+    ap.add_argument("--gamepad-deadzone", type=float, default=None,
+                    help="zone morte des sticks, fraction 0..1 (defaut : profil, 0.12)")
+    ap.add_argument("--gamepad-probe", action="store_true",
+                    help="affiche en continu les indices axes/boutons/croix vus (calibrage "
+                         "d'un autre modele de manette) ; robot_controlv3")
     ap.add_argument("--index", default="auto",
                     help="index camera USB, ou 'auto' pour scanner (defaut auto)")
     ap.add_argument("--camera-name", default="USB",

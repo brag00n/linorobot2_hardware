@@ -168,6 +168,22 @@ def resolve(args):
             sensors["protocol"] = args.protocol
     args.sensors = sensors
 
+    # --- manette de jeu (gamepad, teleop portable pygame) ---
+    g = prof.get("gamepad")
+    gamepad = None
+    if g:
+        gamepad = {
+            "index": g.get("index", 0),          # numero de manette SDL (0 = premiere)
+            "deadzone": g.get("deadzone", 0.12),  # zone morte des sticks (fraction)
+            "expo": g.get("expo", 0.35),          # courbe expo (finesse au centre)
+            "enabled": not getattr(args, "no_gamepad", False),
+        }
+        if getattr(args, "gamepad_index", None) is not None:
+            gamepad["index"] = args.gamepad_index
+        if getattr(args, "gamepad_deadzone", None) is not None:
+            gamepad["deadzone"] = args.gamepad_deadzone
+    args.gamepad = gamepad
+
     # --- valeurs legacy (bannieres/telemetrie/gateway) = carte de controle principale ---
     primary = next((c for c in controls if c["enabled"]),
                    controls[0] if controls else None)

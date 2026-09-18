@@ -15,5 +15,11 @@
     "port": "COM6",
     "baud": 115200,
     "protocol": "mavlink"
+  },
+  "gamepad": {
+    "enabled": true,
+    "index": 0,
+    "deadzone": 0.12,
+    "expo": 0.35
   }
 }
