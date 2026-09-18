@@ -591,11 +591,12 @@ _HELP_GROUPS = [
     ("SUIVI", [(5, "F", "suivi"), (6, "M", "detecteur"),
                (7, "T", "tracker"), (8, "P", "prediction")]),
     ("RECO", [(13, "R", "reco"), (15, "A", "acquis."), (14, "G", "apprend.")]),
-    ("SYSTEME", [(10, "Echap", "quitter")]),
+    ("SYSTEME", [(17, "Manette", "BT"), (10, "Echap", "quitter")]),
 ]
 _BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
 _BTN_TARGET = 12                     # index du bouton taille de surface cible (+/-)
 _BTN_SPEED = 9                       # index du bouton vitesse moteur (Page-Up/Down)
+_BTN_GAMEPAD = 17                    # index du bouton manette (pastille etat connexion)
 
 
 def _shift_down():
@@ -666,19 +667,23 @@ def _help_btn_for_key(key):
             "r": 13, "a": 15, "g": 14, "o": 16}.get(c, None)
 
 
-def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, speed=None):
+def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, speed=None,
+                      gamepad=None):
     """Matrice de boutons d'aide (bas-gauche), groupee par type : chaque GROUPE est
     une colonne (en-tete + boutons empiles, alignes en bas). Un bouton s'eclaircit
     quand sa touche est pressee (`active` = index eclaires). Geometrie deterministe
     -> stable, seule la couleur change. `cam_src` ('ext'/'int') annote le bouton V.
     `accent` = {index: couleur BGR} : bouton a etat COLLANT (allume tant que l'etat
     dure, teinte de la couleur) -> F allume quand le suivi est arme, G rouge pendant
-    l'apprentissage. Prioritaire sur le flash `active`."""
+    l'apprentissage. Prioritaire sur le flash `active`.
+    `gamepad` : etat manette pour la pastille du bouton MANETTE -> True (vert,
+    connectee), False (rouge, absente), None (gris, node desactive)."""
     accent = accent or {}
     fh = frame.shape[0]
     x0, bottom = 8, fh - 8
     sl, sd, sh = 0.45, 0.4, 0.4      # echelles libelle / description / en-tete
     pad, lg, bh, vg, colgap = 8, 6, 20, 4, 10
+    dot_r, dot_gap = 4, 8            # pastille etat (bouton MANETTE)
     s = bh + vg
     x = x0
     for header, btns in _HELP_GROUPS:
@@ -695,13 +700,15 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
                 d = f"{desc} {speed}"
             (lw, _), _ = cv2.getTextSize(key, _FONT, sl, 2)
             (dw, _), _ = cv2.getTextSize(d, _FONT, sd, 1)
-            labels.append((idx, key, d, lw))
-            colw = max(colw, lw + lg + dw + 2 * pad)
+            # le bouton MANETTE reserve de la place a droite pour sa pastille d'etat
+            extra = (dot_gap + 2 * dot_r) if idx == _BTN_GAMEPAD else 0
+            labels.append((idx, key, d, lw, dw))
+            colw = max(colw, lw + lg + dw + extra + 2 * pad)
         k = len(btns)
         start_y = bottom - (k - 1) * s - bh
         # en-tete du groupe
         _put(frame, x + 1, start_y - 7, header, (140, 140, 140), sh, 1)
-        for i, (idx, key, d, lw) in enumerate(labels):
+        for i, (idx, key, d, lw, dw) in enumerate(labels):
             by = start_y + i * s
             acc = accent.get(idx)
             on = idx in active
@@ -722,6 +729,11 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
             _put(frame, x + pad, ty, key, (255, 255, 255) if lit else (215, 215, 215), sl, 2)
             _put(frame, x + pad + lw + lg, ty, d,
                  (200, 210, 200) if lit else (160, 160, 160), sd, 1)
+            if idx == _BTN_GAMEPAD:
+                # pastille : vert=connectee, rouge=absente, gris=node desactive
+                col = _C_OFF if gamepad is None else (_C_ON if gamepad else _C_BAD)
+                dx = x + pad + lw + lg + dw + dot_gap + dot_r
+                cv2.circle(frame, (dx, by + bh // 2), dot_r, col, -1)
         x += colw + colgap
     return x - colgap                              # bord droit du dernier groupe dessine
 
@@ -729,7 +741,7 @@ def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, spe
 def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
                     motion_on, smooth, active, met, n_faces, p1_fps, tstate, gp,
                     key_flash=None, btn_accent=None, mcfg=None, speed=None, cmdvel=None,
-                    es=None, esp32_port=None, ts=None, teensy_port=None):
+                    es=None, esp32_port=None, ts=None, teensy_port=None, gamepad=None):
     """Dispose les cartes materielles aux zones dediees de l'ecran + la matrice
     de boutons (bas-gauche).
 
@@ -760,7 +772,8 @@ def _draw_hud_cards(frame, cam_ok, camnode, link, port_name, gp_port, snap, pt,
     # --- matrice de boutons (bas-gauche) : dessinee d'abord pour connaitre son bord
     #     droit et y adosser la carte ESP32 sans chevauchement. ---
     mx = _draw_help_matrix(frame, key_flash or set(), getattr(camnode, "source", "ext"),
-                           getattr(pt, "deadzone", None), accent=btn_accent, speed=speed)
+                           getattr(pt, "deadzone", None), accent=btn_accent, speed=speed,
+                           gamepad=gamepad)
 
     # --- carte de controle ESP32 WaveShare : BAS-CENTRE (zone dediee) ---
     # Centree dans la bande libre du bas, entre la matrice (a gauche) et GROVE (a
@@ -1549,6 +1562,9 @@ class RobotControlCore:
                 self._train_done_t = 0.0
             elif tr is not None and tr.summary is not None and self._train_done_t == 0.0:
                 self._train_done_t = now               # 1er tick apres la fin du batch
+            gp_conn = None
+            if self.gamepad is not None:
+                gp_conn = bool(joy and joy.connected)  # vert/rouge sur le bouton MANETTE
             _draw_hud_cards(frame, cam_ok, self.camera, self.stm32_link, self.stm32_port,
                             self.args.grovepi_port, snap, pt, self.motion_on,
                             not self.args.no_smooth, self.active, met, len(faces),
@@ -1556,7 +1572,7 @@ class RobotControlCore:
                             mcfg=self.mcfg, speed=self.motion.speedLevel,
                             cmdvel=(self.motion.lin, self.motion.ang),
                             es=es, esp32_port=self.esp32_port,
-                            ts=ts, teensy_port=self.teensy_port)
+                            ts=ts, teensy_port=self.teensy_port, gamepad=gp_conn)
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
             # version applicative (coin bas-gauche) : repere de code charge

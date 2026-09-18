@@ -79,6 +79,14 @@ def _status_text(state, last):
         lines.append("detect    : seq=%s visages=%s nx=%s ny=%s aire=%s%%"
                      % (det.get("seq"), det.get("faces"), det.get("nx"),
                         det.get("ny"), det.get("area")))
+    gpm = last.get("metric:gamepad_input_actuator")
+    if gpm:
+        gv = gpm.get("value", {})
+        lines.append("manette   : %s%s pilotage=%s vmin=%s vmax=%s"
+                     % ("connectee" if gv.get("connected") else "absente",
+                        (" (%s)" % gv.get("name")) if gv.get("name") else "",
+                        "oui" if gv.get("driving") else "non",
+                        gv.get("speed_min"), gv.get("speed_max")))
     for sub in _rx_subs(last):
         r = last.get("rx:" + sub)
         fields = {k: v for k, v in r.items() if k not in ("t", "type", "sub")}
@@ -265,6 +273,31 @@ def t_capture(args):
             % (LOGS.snapshot, age, size))
 
 
+def t_gamepad(args):
+    """Etat de la manette de jeu (metrique gamepad_input) lue dans state.json."""
+    state = LOGS.read_state()
+    if state is None:
+        return ("Aucune telemetrie (%s absent). L'app robot_control est-elle lancee "
+                "(sans --no-telemetry) ?" % LOGS.state)
+    rec = state.get("last", {}).get("metric:gamepad_input_actuator")
+    if rec is None:
+        return ("Aucune metrique manette. Soit le node GamepadNode est desactive "
+                "(--no-gamepad / profil), soit la metrique 'gamepad_input' est coupee, "
+                "soit l'app tourne sans manette configuree.")
+    v = rec.get("value", {})
+    age = round(time.time() - rec.get("t", 0), 1)
+    return ("manette   : %s%s\n"
+            "nom       : %s\n"
+            "pilotage  : %s   (stick pousse -> le Core envoie cmd_vel)\n"
+            "vitesse   : min=%s max=%s   (niveaux 0..9)\n"
+            "maj       : il y a %ss"
+            % ("CONNECTEE" if v.get("connected") else "ABSENTE",
+               "" if v.get("connected") else " (point rouge sur le bouton MANETTE)",
+               v.get("name") or "-",
+               "EN COURS" if v.get("driving") else "au repos",
+               v.get("speed_min"), v.get("speed_max"), age))
+
+
 def t_mark(args):
     """Pose un repere temporel : tail/analyze avec since_mark partent d'ici.
 
@@ -335,6 +368,12 @@ TOOLS = [
      "description": "Chemin et age de la derniere image annotee ecrite par l'app "
                     "(a lire avec l'outil de lecture d'image du client).",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "gamepad",
+     "description": "Etat de la manette de jeu (metrique gamepad_input, lecture des "
+                    "logs) : connectee ou non, nom du peripherique, pilotage en cours, "
+                    "et plage de vitesse min/max courante. Point vert/rouge equivalent "
+                    "au bouton MANETTE du HUD.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "mark",
      "description": "Pose un repere temporel ; tail/analyze avec since_mark "
                     "repartiront de cet instant (pour isoler un essai).",
@@ -350,6 +389,7 @@ HANDLERS = {
     "tracking": t_tracking,
     "analyze": t_analyze,
     "capture": t_capture,
+    "gamepad": t_gamepad,
     "mark": t_mark,
 }
 
