@@ -1,0 +1,45 @@
+# Rend `tools/` installable en editable (`pip install -e tools`) pour que les noeuds
+# ROS2 (paquet bamboo_base, conteneur RPi) importent la couche hote SANS la reecrire :
+#   from robot_control.communication.Esp32ComSerial import Esp32ComSerial
+#   from robot_control.communication.wirecodec import make_codec   # -> MavlinkCodec
+#
+# NB IMPORTANT : install editable seulement (`-e`). wirecodec.py et MavlinkCodec resolvent
+# leurs dependances de protocole par des hacks sys.path relatifs a __file__ :
+#   - `from .mav import bamboo`                    (module dialecte genere, DANS le paquet)
+#   - firmware/stm32_bamboo/tools/ros_monitor.py   (protocole Yahboom, HORS du paquet)
+# Le second n'est PAS packageable : l'arbre `firmware/` doit rester present a cote de
+# `tools/` (donc monte dans le conteneur, cf. plan Empaquetage Docker). Un install non
+# editable copierait `tools/` ailleurs et casserait ce chemin relatif.
+#
+# Dependance runtime : pyserial seule (liaison serie ESP32). Vision (opencv/numpy) et
+# manette (pygame) sont des EXTRAS optionnels : l'env ROS du driver n'en a pas besoin, et
+# opencv est lourd a compiler sur RPi. Le module dialecte MAVLink genere est autonome
+# (stdlib seule), il n'ajoute aucune dependance.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bamboo-robot-control"
+version = "0.1.0"
+description = "Couche hote multi-cartes Bamboo (serie/MAVLink, teleop, vision) reutilisee par les noeuds ROS2"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+# Perception (app teleop/suivi) : inutile pour le driver ROS pur.
+vision = ["opencv-python>=4.8", "numpy>=1.24"]
+# Manette (robot_controlv3 GamepadNode) : le joystick ROS passe par joy_linux, pas pygame.
+gamepad = ["pygame>=2.6"]
+
+[tool.setuptools.packages.find]
+# Depuis tools/ : ne packager que nos deux arbres applicatifs (pas data/, pas les demos
+# a plat face_detect.py / show_usb_cam.py, pas Bambou4WD_V1-master).
+include = ["robot_control*", "robot_controlv3*"]
+
+[tool.setuptools.package-data]
+# Embarquer les ressources non-.py utiles a l'execution (cascade Haar packagee, si reference).
+"*" = ["*.xml"]

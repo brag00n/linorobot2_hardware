@@ -17,6 +17,24 @@
         "BAMBOU_BAUD": "115200",
         "BAMBOU_CPR": "1320"
       }
+    },
+    "ros2-analysis": {
+      "command": "C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "robot_control.mcp.ros2"],
+      "env": {
+        "PYTHONPATH": "C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools",
+        "ROS2_BRIDGE_URL": "ws://192.168.1.164:9090"
+      }
+    },
+    "ros2-orchestrator": {
+      "command": "C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "robot_control.mcp.orchestrator"],
+      "env": {
+        "PYTHONPATH": "C:\\dev\\Perso\\prj_robotique\\Bamboo4WD_V4\\linorobot2_hardware\\tools",
+        "RPI_SSH_HOST": "dietpi@192.168.1.164",
+        "RPI_SSH_KEY": "~/.ssh/id_rpi_grovepi",
+        "RPI_COMPOSE_DIR": "/home/dietpi/prj_robotique/Bamboo4WD_V4/linorobot2/docker"
+      }
     }
   }
 }

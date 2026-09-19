@@ -9,6 +9,10 @@ pyserial==3.5
 # Windows/Linux/RPi via SDL. Import OPTIONNEL cote code : si pygame manque, l'app tourne
 # sans manette (aucune erreur). Sous RPi (armv7/aarch64), piwheels fournit des roues.
 pygame==2.6.1
+# websocket-client : client rosbridge du serveur MCP `ros2-analysis` (robot_control/mcp/ros2.py).
+# Interroge le graphe ROS2 du conteneur RPi (WebSocket JSON :9090). Stdlib seule sinon ;
+# n'impacte ni l'app teleop ni les deux autres serveurs MCP.
+websocket-client==1.8.0
 # NB : le protocole MAVLink n'ajoute AUCUNE dependance runtime. Le module dialecte genere
 # communication/mav/bamboo.py est autonome (stdlib seule ; fastcrc optionnel avec fallback
 # pur-Python). pymavlink/mavgen ne sert qu'a REGENERER ce module -> cf. requirements-dev.txt.
