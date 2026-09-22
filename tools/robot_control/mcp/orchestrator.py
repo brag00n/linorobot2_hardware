@@ -58,7 +58,8 @@ COMPOSE = "sudo -n docker compose"
 SERVICES = {
     "rosbridge": "pont rosbridge_suite :9090 (client MCP ros2-analysis)",
     "foxglovebridge": "pont foxglove_bridge :8765 (client Foxglove Studio)",
-    "camera.real": "camera ROS : v4l2_camera -> /image_raw + web_video_server :8080 (+metrique FPS)",
+    "camera.real": "camera ROS : v4l2_camera -> /image_raw + web_video_server :8080 (~12fps, +metrique FPS)",
+    "camera.mjpg": "camera ROS 30fps : gscam2 MJPG passthrough -> /image_raw/compressed + web_video_server :8080",
     "camera.h264": "camera H.264 distante : MediaMTX RTSP :8554 / HLS :8888 / WebRTC :8889",
     "driver.real": "driver ESP32 (pont MAVLink) LECTURE SEULE (enable_cmd_vel=false)",
     "robotdesc": "robot_state_publisher (description URDF)",
