@@ -4,24 +4,30 @@
   "control": [
     {
       "kind": "stm32",
-      "vid_pid": ["1A86:7523"],
-      "port": "COM7",
+      "vid_pid": [
+        "1A86:7523"
+      ],
+      "port": "COM6",
       "baud": 115200,
       "cpr": 1320,
       "protocol": "mavlink"
     },
     {
       "kind": "esp32",
-      "vid_pid": ["10C4:EA60"],
-      "port": "COM8",
+      "vid_pid": [
+        "10C4:EA60"
+      ],
+      "port": "COM6",
       "baud": 921600,
       "cpr": 2114,
       "protocol": "mavlink"
     },
     {
       "kind": "teensy",
-      "vid_pid": ["16C0:0483"],
-      "port": "COM9",
+      "vid_pid": [
+        "16C0:0483"
+      ],
+      "port": "COM6",
       "baud": 115200,
       "cpr": 48,
       "protocol": "mavlink"
@@ -29,9 +35,17 @@
   ],
   "sensors": {
     "kind": "grovepi",
-    "vid_pid": ["0403:6001"],
+    "vid_pid": [
+      "0403:6001"
+    ],
     "port": "COM6",
     "baud": 115200,
     "protocol": "mavlink"
+  },
+  "gamepad": {
+    "enabled": true,
+    "index": 0,
+    "deadzone": 0.12,
+    "expo": 0.35
   }
 }
