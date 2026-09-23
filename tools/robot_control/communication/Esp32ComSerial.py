@@ -52,27 +52,27 @@ class Esp32ComSerial(RobotComSerial):
                          on_port_resolved=on_port_resolved, **codec_kwargs)
 
     def _probe(self, port, timeout=2.5):
-        """Ouvre un port candidat DTR/RTS DESASSERTES et compte les trames du protocole actif.
+        """Ouvre un port candidat SANS TOUCHER A DTR/RTS et compte les trames du protocole.
 
-        /!\ Difference critique avec la STM32 (CH340) : sur les CP210x de la carte
-        WaveShare, DTR et RTS sont cables aux broches EN (reset) et GPIO0 (boot) de
-        l'ESP32. La forme `serial.Serial(port, baud)` de la classe de base asserte
-        ces lignes -> l'ESP32 part en reset/download et ne debite que des octets
-        parasites (0x80/0x00), jamais de trame valide. On construit donc le port
-        SANS l'ouvrir, on force dtr=rts=False, puis .open() : l'ESP32 tourne (ou
-        redemarre proprement une seule fois). Timeout allonge (2.5 s) pour couvrir
-        un eventuel reboot (~1.5 s) + quelques trames avant de valider. Le comptage
-        passe par un codec NEUF du protocole actif (et capte le sysid en MAVLink),
-        comme la classe de base.
+        /!\ Ne JAMAIS manipuler DTR/RTS sur les CP210x de la carte WaveShare : ces deux
+        lignes vont au circuit d'auto-reset, cable sur EN (reset) et GPIO0 (boot) de
+        l'ESP32. Ce circuit est inerte quand les deux lignes sont dans le MEME etat, et
+        c'est le cas a l'ouverture (l'OS les asserte toutes les deux) : l'application
+        tourne et debite. Mais pyserial ecrit les lignes L'UNE APRES L'AUTRE, donc tout
+        reglage -- meme vers un etat symetrique comme dtr=rts=False -- fait passer la
+        carte par un etat asymetrique : elle redemarre EN MODE DOWNLOAD et devient
+        DEFINITIVEMENT muette jusqu'au prochain reset. Mesure a l'appui : port ouvert
+        intact = 73 trames/s ; apres un seul reglage des lignes = 0 octet, et le retour
+        a l'etat initial ne la ramene pas.
+
+        (Une version anterieure forcait dtr=rts=False en croyant eviter un reset ; le
+        "bruit 0x80/0x00" qui avait motive ce choix etait en fait le flux applicatif a
+        921600 lu a 115200. Le sniff comptait alors 2 trames -- celles deja tamponnees
+        avant le reset -- puis plus rien, ce qui faisait passer une carte saine pour
+        morte. Si un reset est un jour necessaire, utiliser resetToApp().)
         """
         try:
-            s = serial.Serial()
-            s.port = port
-            s.baudrate = self.baud
-            s.timeout = 0.1
-            s.dtr = False
-            s.rts = False
-            s.open()
+            s = serial.Serial(port, self.baud, timeout=0.1)
         except Exception:
             return 0, None
         codec = make_codec(self.protocol, **self._codec_kwargs)
@@ -102,6 +102,29 @@ class Esp32ComSerial(RobotComSerial):
         except Exception:
             pass
         return ok, None
+
+    def resetToApp(self):
+        """Redemarre la carte SUR L'APPLICATION par le circuit d'auto-reset (USB seul).
+
+        Cablage mesure sur cette carte : RTS -> EN (reset), DTR -> GPIO0 (boot), assertion
+        pyserial = niveau BAS sur la broche. Demarrer l'application exige donc GPIO0 HAUT
+        au moment ou EN est relache : dtr=False, rts=True (reset tenu), pause, rts=False.
+        Toute autre sequence relache EN avec GPIO0 bas -> bootloader, donc silence. C'est
+        la SEULE facon de recuperer une carte laissee en mode download, et la ROM le
+        confirme par "boot:0x13 (SPI_FAST_FLASH_BOOT)".
+        """
+        if self.ser is None:
+            return False
+        try:
+            self.ser.dtr = False           # GPIO0 haut = demarrage normal
+            self.ser.rts = True            # EN bas = carte en reset
+            time.sleep(0.15)
+            self.ser.rts = False           # EN haut = l'application demarre
+            time.sleep(1.8)                # duree de boot avant les premieres trames
+            return True
+        except Exception as e:
+            self.last_err = str(e)
+            return False
 
     def _open(self):
         """Ouvre la liaison en VERIFIANT meme le port prefere par sniff.
