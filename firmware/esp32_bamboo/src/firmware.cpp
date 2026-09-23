@@ -57,6 +57,7 @@
 #include "led.h"
 
 #include "MySyslog.h"
+#include "fw_version.h"   // identite du microcode, source unique de la version
 
 #ifdef ENABLE_DEBUG_I2C 
    #include <i2cdetect.h> 
@@ -646,7 +647,16 @@ void setup()
 #ifdef ENABLE_DEVICE_OLED
     if (isSyslog) syslog(LOG_INFO, "--- init_oled\n");
     init_oled();
-    update_oled("BAMBOO v0.01 OCO", "Setting up...", "", "");
+    // Ligne de titre de l'OLED : elle est ECRITE UNE SEULE FOIS et reste affichee, la
+    // boucle ne repassant que NULL pour la ligne 0. Elle etait figee a "v0.01" alors que
+    // la carte annoncait deja une autre version en MAVLink -- on la derive donc de
+    // include/fw_version.h, comme AUTOPILOT_VERSION et le STATUSTEXT de boot.
+    // Budget STRICT : SSD1306 128x32 en setTextSize(1), police 6x8 -> 21 colonnes et
+    // exactement 4 lignes (lib/oled/oled_ctrl.h). Adafruit_GFX renvoie a la ligne tout
+    // seul, donc un titre plus long decalerait les lignes suivantes et pousserait la
+    // 4e hors de l'ecran. "BAMBOO v0.2.0" = 13 colonnes, et le champ de version reste
+    // sous la limite meme a deux chiffres par nombre ("BAMBOO v10.20.30" = 16).
+    update_oled("BAMBOO v" FW_VERSION_STR, "Setting up...", "", "");
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n");
 #endif
 
