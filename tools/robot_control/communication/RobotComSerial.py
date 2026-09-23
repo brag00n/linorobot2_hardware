@@ -72,6 +72,14 @@ class RobotComSerial:
         self.yaw = None                # deg
         self.roll = self.pitch = None  # deg
         self.encoders = None           # [M1..M4]
+        # Vitesses de rotation telles que la boucle PID EMBARQUEE les voit, en RPM
+        # (BAMBOO_MOTOR_RPM, carte ESP32 WaveShare uniquement -> reste None ailleurs).
+        # Deux listes distinctes : la MESURE encodeur filtree carte, et la CONSIGNE
+        # sortie de la cinematique embarquee. On ne les recalcule pas cote hote :
+        # deriver la mesure des comptages y melerait la cadence du lien, et deriver
+        # la consigne du Twist masquerait un desaccord de geometrie hote/carte.
+        self.motor_rpm = None          # [M1..M4] mesure (RPM)
+        self.motor_rpm_req = None      # [M1..M4] consigne (RPM)
         # Champ magnetique (extension carte ESP32 WaveShare / BAMBOO_MAG ; la STM32
         # ne l'emet pas -> reste None). mag = (mx, my, mz) en uT ; heading = cap
         # boussole en degres [0..360[ derive de (mx, my).
@@ -87,10 +95,12 @@ class RobotComSerial:
         self.ts_speed = None           # ms carte (vitesse+batterie)
         self.ts_imu = None             # ms carte (attitude)
         self.ts_enc = None             # ms carte (encodeurs)
+        self.ts_rpm = None             # ms carte (RPM mesure/demande)
         self.ts_mag = None             # ms carte (magneto)
         self.speed_t = 0.0             # time.time() de la derniere trame vitesse
         self.imu_t = 0.0               # time.time() de la derniere trame attitude
         self.enc_t = 0.0               # time.time() de la derniere trame encodeurs
+        self.rpm_t = 0.0               # time.time() de la derniere trame RPM
         self.mag_t = 0.0               # time.time() de la derniere trame magneto
 
         # Rapports requete/reponse (getPid/getWheelGeom/getCarType) + horodatage :
@@ -323,6 +333,14 @@ class RobotComSerial:
             self.enc_hist.append((time.time(), list(self.encoders)))
             if self.tel:
                 self.tel.log_rx(self._rx_prefix + "encoder", m=list(self.encoders))
+        elif kind == "motor_rpm":
+            self.motor_rpm = list(p["rpm"])
+            self.motor_rpm_req = list(p["req"])
+            self.ts_rpm = p.get("ts")
+            self.rpm_t = time.time()
+            if self.tel:
+                self.tel.log_rx(self._rx_prefix + "motor_rpm",
+                                rpm=list(self.motor_rpm), req=list(self.motor_rpm_req))
         # --- rapports requete/reponse (lus par getCarType/getWheelGeom/getPid) ---
         elif kind == "car_type":
             self.car_type = p["value"]
@@ -380,12 +398,16 @@ class RobotComSerial:
                 "roll": self.roll, "pitch": self.pitch,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
+                "motor_rpm": list(self.motor_rpm) if self.motor_rpm else None,
+                "motor_rpm_req": (list(self.motor_rpm_req)
+                                  if self.motor_rpm_req else None),
                 "mag": self.mag, "heading": self.heading,
                 "ts_speed": self.ts_speed, "ts_imu": self.ts_imu, "ts_enc": self.ts_enc,
-                "ts_mag": self.ts_mag,
+                "ts_mag": self.ts_mag, "ts_rpm": self.ts_rpm,
                 "speed_age": (now - self.speed_t) if self.speed_t else None,
                 "imu_age": (now - self.imu_t) if self.imu_t else None,
                 "enc_age": (now - self.enc_t) if self.enc_t else None,
+                "rpm_age": (now - self.rpm_t) if self.rpm_t else None,
                 "mag_age": (now - self.mag_t) if self.mag_t else None,
                 "ok": self.ok, "bad": self.bad,
             }

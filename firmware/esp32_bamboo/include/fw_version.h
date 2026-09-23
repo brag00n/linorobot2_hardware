@@ -37,12 +37,18 @@
 //           amorcages alignes sur les valeurs constructeur WaveShare.
 //           Toujours aucune persistance : le driver repousse la
 //           configuration a chaque connexion.
+//    0.3.0  BAMBOO_MOTOR_RPM (42006) : vitesse mesuree ET demandee par
+//           moteur, en RPM, emise depuis les valeurs que moveBase()
+//           passe au PID. C'est la matiere du reglage des gains cote
+//           ROS (/joint_states et /req_states). Les deux voies sans
+//           encodeur (M3/M4) ont un RPM mesure RECOPIE de M1/M2, mais
+//           une consigne bien distincte.
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 2
+#define FW_VERSION_MINOR 3
 #define FW_VERSION_PATCH 0
 
 #define FW_STR_(x) #x

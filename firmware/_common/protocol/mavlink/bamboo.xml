@@ -65,5 +65,11 @@
       <field type="float" name="my" units="uT">Composante Y.</field>
       <field type="float" name="mz" units="uT">Composante Z.</field>
     </message>
+    <message id="42006" name="BAMBOO_MOTOR_RPM">
+      <description>Vitesse de rotation PAR MOTEUR, mesuree et demandee, telle que la boucle PID embarquee les voit. C'est la grandeur que le PID regule reellement : elle ne se deduit pas des compteurs (42003) sans refaire le filtrage de la carte, ni de la consigne de chassis (42004) sans refaire sa cinematique -- donc un desaccord de geometrie entre l'hote et la carte reste visible ici. Unite RPM, comme les gains PID. ATTENTION : cette carte n'a que DEUX encodeurs (un par cote), donc rpm[2]/rpm[3] sont des RECOPIES de rpm[0]/rpm[1] ; rpm_req[2]/rpm_req[3], eux, sont de vraies consignes distinctes.</description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">Horloge carte depuis le boot.</field>
+      <field type="float[4]" name="rpm" units="rpm">Vitesse MESUREE M1..M4 (encodeur, apres filtrage carte).</field>
+      <field type="float[4]" name="rpm_req" units="rpm">Vitesse DEMANDEE M1..M4 (sortie de la cinematique embarquee = consigne du PID).</field>
+    </message>
   </messages>
 </mavlink>

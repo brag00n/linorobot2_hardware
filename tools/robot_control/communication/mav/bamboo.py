@@ -4903,6 +4903,7 @@ MAVLINK_MSG_ID_BAMBOO_MOTOR_PWM = 42002
 MAVLINK_MSG_ID_BAMBOO_ENCODERS = 42003
 MAVLINK_MSG_ID_BAMBOO_CMD_VEL = 42004
 MAVLINK_MSG_ID_BAMBOO_MAG = 42005
+MAVLINK_MSG_ID_BAMBOO_MOTOR_RPM = 42006
 MAVLINK_MSG_ID_SYS_STATUS = 1
 MAVLINK_MSG_ID_SYSTEM_TIME = 2
 MAVLINK_MSG_ID_PING = 4
@@ -5315,6 +5316,55 @@ class MAVLink_bamboo_mag_message(MAVLink_message):
 # Define name on the class for backwards compatibility (it is now msgname).
 # Done with setattr to hide the class variable from mypy.
 setattr(MAVLink_bamboo_mag_message, "name", mavlink_msg_deprecated_name_property())
+
+
+class MAVLink_bamboo_motor_rpm_message(MAVLink_message):
+    """
+    Vitesse de rotation PAR MOTEUR, mesuree et demandee, telle que la
+    boucle PID embarquee les voit. C'est la grandeur que le PID regule
+    reellement : elle ne se deduit pas des compteurs (42003) sans
+    refaire le filtrage de la carte, ni de la consigne de chassis
+    (42004) sans refaire sa cinematique -- donc un desaccord de
+    geometrie entre l'hote et la carte reste visible ici. Unite RPM,
+    comme les gains PID. ATTENTION : cette carte n'a que DEUX
+    encodeurs (un par cote), donc rpm[2]/rpm[3] sont des RECOPIES de
+    rpm[0]/rpm[1] ; rpm_req[2]/rpm_req[3], eux, sont de vraies
+    consignes distinctes.
+    """
+
+    id = MAVLINK_MSG_ID_BAMBOO_MOTOR_RPM
+    msgname = "BAMBOO_MOTOR_RPM"
+    fieldnames = ["time_boot_ms", "rpm", "rpm_req"]
+    ordered_fieldnames = ["time_boot_ms", "rpm", "rpm_req"]
+    fieldtypes = ["uint32_t", "float", "float"]
+    fielddisplays_by_name: Dict[str, str] = {}
+    fieldenums_by_name: Dict[str, str] = {}
+    fieldunits_by_name: Dict[str, str] = {"time_boot_ms": "ms", "rpm": "rpm", "rpm_req": "rpm"}
+    native_format = bytearray(b"<Iff")
+    orders = [0, 1, 2]
+    lengths = [1, 4, 4]
+    array_lengths = [0, 4, 4]
+    crc_extra = 25
+    unpacker = struct.Struct("<I4f4f")
+    instance_field = None
+    instance_offset = -1
+
+    def __init__(self, time_boot_ms: int, rpm: Sequence[float], rpm_req: Sequence[float]):
+        MAVLink_message.__init__(self, MAVLink_bamboo_motor_rpm_message.id, MAVLink_bamboo_motor_rpm_message.msgname)
+        self._fieldnames = MAVLink_bamboo_motor_rpm_message.fieldnames
+        self._instance_field = MAVLink_bamboo_motor_rpm_message.instance_field
+        self._instance_offset = MAVLink_bamboo_motor_rpm_message.instance_offset
+        self.time_boot_ms = time_boot_ms
+        self.rpm = rpm
+        self.rpm_req = rpm_req
+
+    def pack(self, mav: "MAVLink", force_mavlink1: bool = False) -> bytes:
+        return self._pack(mav, self.crc_extra, self.unpacker.pack(self.time_boot_ms, self.rpm[0], self.rpm[1], self.rpm[2], self.rpm[3], self.rpm_req[0], self.rpm_req[1], self.rpm_req[2], self.rpm_req[3]), force_mavlink1=force_mavlink1)
+
+
+# Define name on the class for backwards compatibility (it is now msgname).
+# Done with setattr to hide the class variable from mypy.
+setattr(MAVLink_bamboo_motor_rpm_message, "name", mavlink_msg_deprecated_name_property())
 
 
 class MAVLink_sys_status_message(MAVLink_message):
@@ -15085,6 +15135,7 @@ mavlink_map: Dict[int, Type[MAVLink_message]] = {
     MAVLINK_MSG_ID_BAMBOO_ENCODERS: MAVLink_bamboo_encoders_message,
     MAVLINK_MSG_ID_BAMBOO_CMD_VEL: MAVLink_bamboo_cmd_vel_message,
     MAVLINK_MSG_ID_BAMBOO_MAG: MAVLink_bamboo_mag_message,
+    MAVLINK_MSG_ID_BAMBOO_MOTOR_RPM: MAVLink_bamboo_motor_rpm_message,
     MAVLINK_MSG_ID_SYS_STATUS: MAVLink_sys_status_message,
     MAVLINK_MSG_ID_SYSTEM_TIME: MAVLink_system_time_message,
     MAVLINK_MSG_ID_PING: MAVLink_ping_message,
@@ -15811,6 +15862,46 @@ class MAVLink(object):
 
         """
         self.send(self.bamboo_mag_encode(time_boot_ms, mx, my, mz), force_mavlink1=force_mavlink1)
+
+    def bamboo_motor_rpm_encode(self, time_boot_ms: int, rpm: Sequence[float], rpm_req: Sequence[float]) -> MAVLink_bamboo_motor_rpm_message:
+        """
+        Vitesse de rotation PAR MOTEUR, mesuree et demandee, telle que la
+        boucle PID embarquee les voit. C'est la grandeur que le PID
+        regule reellement : elle ne se deduit pas des compteurs
+        (42003) sans refaire le filtrage de la carte, ni de la
+        consigne de chassis (42004) sans refaire sa cinematique --
+        donc un desaccord de geometrie entre l'hote et la carte reste
+        visible ici. Unite RPM, comme les gains PID. ATTENTION : cette
+        carte n'a que DEUX encodeurs (un par cote), donc rpm[2]/rpm[3]
+        sont des RECOPIES de rpm[0]/rpm[1] ; rpm_req[2]/rpm_req[3],
+        eux, sont de vraies consignes distinctes.
+
+        time_boot_ms              : Horloge carte depuis le boot. [ms] (type:uint32_t)
+        rpm                       : Vitesse MESUREE M1..M4 (encodeur, apres filtrage carte). [rpm] (type:float)
+        rpm_req                   : Vitesse DEMANDEE M1..M4 (sortie de la cinematique embarquee = consigne du PID). [rpm] (type:float)
+
+        """
+        return MAVLink_bamboo_motor_rpm_message(time_boot_ms, rpm, rpm_req)
+
+    def bamboo_motor_rpm_send(self, time_boot_ms: int, rpm: Sequence[float], rpm_req: Sequence[float], force_mavlink1: bool = False) -> None:
+        """
+        Vitesse de rotation PAR MOTEUR, mesuree et demandee, telle que la
+        boucle PID embarquee les voit. C'est la grandeur que le PID
+        regule reellement : elle ne se deduit pas des compteurs
+        (42003) sans refaire le filtrage de la carte, ni de la
+        consigne de chassis (42004) sans refaire sa cinematique --
+        donc un desaccord de geometrie entre l'hote et la carte reste
+        visible ici. Unite RPM, comme les gains PID. ATTENTION : cette
+        carte n'a que DEUX encodeurs (un par cote), donc rpm[2]/rpm[3]
+        sont des RECOPIES de rpm[0]/rpm[1] ; rpm_req[2]/rpm_req[3],
+        eux, sont de vraies consignes distinctes.
+
+        time_boot_ms              : Horloge carte depuis le boot. [ms] (type:uint32_t)
+        rpm                       : Vitesse MESUREE M1..M4 (encodeur, apres filtrage carte). [rpm] (type:float)
+        rpm_req                   : Vitesse DEMANDEE M1..M4 (sortie de la cinematique embarquee = consigne du PID). [rpm] (type:float)
+
+        """
+        self.send(self.bamboo_motor_rpm_encode(time_boot_ms, rpm, rpm_req), force_mavlink1=force_mavlink1)
 
     def sys_status_encode(self, onboard_control_sensors_present: int, onboard_control_sensors_enabled: int, onboard_control_sensors_health: int, load: int, voltage_battery: int, current_battery: int, battery_remaining: int, drop_rate_comm: int, errors_comm: int, errors_count1: int, errors_count2: int, errors_count3: int, errors_count4: int) -> MAVLink_sys_status_message:
         """

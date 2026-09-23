@@ -24,6 +24,7 @@ Evenements normalises (kind, payload) consommes par RobotComSerial._applyEvent :
   ("ir",      {id,mm,ts})              telemetre IR id 4, mm|None - GrovePi
   ("mag",     {mx,my,mz,heading,ts})   uT + cap boussole deg
   ("encoder", {m:[M1..M4],ts})         comptage cumulatif
+  ("motor_rpm", {rpm:[M1..M4],req:[M1..M4],ts})  RPM mesure + demande, vus par le PID embarque
   ("car_type",{value})                 octet type chassis
   ("wheel_geom", {"cpr (tics/tour)","circ (mm)","diam (mm)","APB (mm)"})
   ("pid",     {index,kp,ki,kd})        index 1..4 = moteur, 5 = yaw
@@ -314,6 +315,14 @@ class MavlinkCodec:
                                "vz": m.wz, "battery": None, "ts": m.time_boot_ms})]
         if t == "BAMBOO_ENCODERS":
             return [("encoder", {"m": [int(c) for c in m.counts], "ts": m.time_boot_ms})]
+        if t == "BAMBOO_MOTOR_RPM":
+            # Les deux nombres que le PID embarque compare, en RPM et sans retouche : c'est
+            # tout l'interet du message (cf. sa description dans bamboo.xml). Les recopies
+            # M3/M4 du RPM mesure sont laissees telles quelles, le consommateur doit savoir
+            # que cette carte n'a que deux encodeurs.
+            return [("motor_rpm", {"rpm": [float(v) for v in m.rpm],
+                                   "req": [float(v) for v in m.rpm_req],
+                                   "ts": m.time_boot_ms})]
         if t == "BAMBOO_MAG":
             heading = math.degrees(math.atan2(m.my, m.mx)) % 360.0
             return [("mag", {"mx": m.mx, "my": m.my, "mz": m.mz,

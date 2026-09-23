@@ -200,6 +200,22 @@ void ConnectorMavlink::publishJoint(joint_state_t* js) {
     mavlink_msg_bamboo_encoders_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
                                      (uint32_t)millis(), counts);
     sendMessage();
+
+    // BAMBOO_MOTOR_RPM : vitesse mesuree et vitesse DEMANDEE par moteur, en RPM.
+    // moveBase() a deja rempli les deux champs juste avant d'appeler le PID (velocity =
+    // getRPM() de l'encodeur, velocity_requested = sortie de kinematics.getRPM()) : on emet
+    // donc exactement les deux nombres que le regulateur compare, sans les recalculer. C'est
+    // ce qui rend le reglage des gains observable depuis ROS -- un RPM redérive cote hote a
+    // partir des compteurs melangerait le filtrage de la carte et la cadence de la liaison,
+    // et une consigne rederivee depuis le Twist masquerait un desaccord de geometrie.
+    float rpm[4], rpm_req[4];
+    for (int m = 0; m < 4; m++) {
+        rpm[m]     = js[m].velocity;
+        rpm_req[m] = js[m].velocity_requested;
+    }
+    mavlink_msg_bamboo_motor_rpm_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
+                                      (uint32_t)millis(), rpm, rpm_req);
+    sendMessage();
 }
 
 void ConnectorMavlink::publishMag(MAGInterface::Mag_t m) {
