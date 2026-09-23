@@ -33,6 +33,7 @@ Clavier : O active/coupe les moteurs (securite), fleches = moteurs (haut/bas ava
 recule, gauche/droite rotation), Maj+fleches = camera pan/tilt, C centre, Page-Up/Down =
 vitesse 0-9, Espace STOP, F suivi, M detecteur, T tracker, P prediction, R reco, Echap.
 """
+import math
 import os
 import time
 
@@ -66,14 +67,15 @@ from robot_control.mcp import gateway
 from .roslite import Executor
 from .metrics import MetricsConfig
 from .nodes import (CameraNode, TrackingNode, ServoNode, BoardNode, GrovePiNode,
-                    GamepadNode, WSEsp32Node, TeensyNode, FaceRecogNode, FaceTrainNode)
+                    GamepadNode, WSEsp32Node, TeensyNode, FaceRecogNode, FaceTrainNode,
+                    WheelTachoNode)
 from .nodes.GamepadNode import (
     AX_LX, AX_LY, AX_RX, AX_RY, AX_LT, AX_RT,
     BTN_A, BTN_B, BTN_X, BTN_Y, BTN_LB, BTN_RB, BTN_BACK, BTN_START, BTN_L3, BTN_R3,
     HAT_DPAD)
 from .msgs import (TrackingConfig, ServoCmd, TrackingResult, TrackingMetrics,
                    ServoState, GrovePiTelemetry, Esp32Telemetry, JoyMsg, RecognitionConfig,
-                   RecognitionResult, TrainState)
+                   RecognitionResult, TrainState, WheelTachoConfig)
 
 
 # ===========================================================================
@@ -496,6 +498,64 @@ def _draw_grove_card(frame, x, y, port_name, gp, mcfg=None):
             cv2.rectangle(frame, (bx, iry - 9), (bx + fill, iry - 3), col, -1)
 
 
+def _draw_tacho_card(frame, x, y, th):
+    """Carte TACHY (tachymetre optique des roues) : RPM signe par roue mesure a la
+    camera. Independante de la carte de controle -- c'est tout l'interet : BambooWS
+    n'a que 2 encodeurs (un par cote) et recopie les voies 3/4 sur 1/2, donc seule
+    une mesure optique temoigne que la 2e roue d'un cote tourne vraiment."""
+    act = bool(th and th.active)
+    cal = bool(th and th.calibrated)
+    yc = _card_frame(frame, x, y, 320, 112, "TACHY", "cam", act, act and cal)
+    if th is None or not act:
+        _put(frame, x + 12, yc, "desarme (W)", _C_OFF, 0.45)
+        return
+    if not cal:
+        _put(frame, x + 12, yc, th.note or "calibration...", _C_WARN, 0.45)
+        return
+    # une ligne par roue : id, angle courant, rpm signe, qualite du marqueur
+    for i, w in enumerate(th.wheels):
+        ry = yc + i * 16
+        rpm = w.get("rpm")
+        q = w.get("quality") or 0.0
+        col = _C_VAL if w.get("ok") else _C_OFF
+        _row(frame, x + 12, ry, [
+            (0, "roue %s" % w.get("id", "?"), _C_LABEL),
+            (62, ("%3.0f deg" % w["theta"]) if w.get("theta") is not None else "  -- ",
+             _C_LABEL),
+            (132, ("%+6.1f rpm" % rpm) if rpm is not None else "    -- rpm", col),
+            (232, "q%3.0f" % q, _C_LABEL if q >= 20 else _C_WARN)])
+    ry = yc + 2 * 16 + 4
+    rec = getattr(th, "recording", 0.0) or 0.0
+    _row(frame, x + 12, ry, [
+        (0, "%4.1f fps" % th.fps, _C_LABEL),
+        (80, ("REC %4.1fs" % rec) if rec > 0 else "", _C_BAD)])
+
+
+def _draw_tacho_overlay(frame, th):
+    """Trace la ROI et l'anneau de mesure de chaque roue : c'est le seul retour
+    visuel qui permet de juger d'un coup d'oeil si la detection Hough a pris la
+    bonne roue et le bon rayon."""
+    if th is None or not th.active:
+        return
+    h, w = frame.shape[:2]
+    x0, y0, x1, y1 = th.roi
+    cv2.rectangle(frame, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)),
+                  (110, 110, 110), 1)
+    for wh in th.wheels:
+        cx, cy = int(wh["cx"]), int(wh["cy"])
+        col = _C_ON if wh.get("ok") else _C_WARN
+        cv2.circle(frame, (cx, cy), int(wh["r"]), (140, 140, 140), 1)
+        cv2.circle(frame, (cx, cy), int(wh["r_mark"]), col, 1)
+        th_deg = wh.get("theta")
+        if th_deg is not None:
+            a = math.radians(th_deg)
+            # meme convention que WheelTachoNode._ring_index : (cos a, -sin a)
+            px = int(cx + wh["r_mark"] * math.cos(a))
+            py = int(cy - wh["r_mark"] * math.sin(a))
+            cv2.line(frame, (cx, cy), (px, py), col, 2)
+        _put(frame, cx - 6, cy - int(wh["r"]) - 6, str(wh.get("id", "")), col, 0.5)
+
+
 def _draw_recog_badge(frame, recog, x=8, y=176, w=320):
     """Bandeau reconnaissance SOUS la carte CAM : ligne d'etat (mode + nom/id_pred +
     score + stabilite) puis VIGNETTE du visage capture (crop 112x112 redresse par
@@ -583,9 +643,15 @@ def _draw_image_markers(frame, faces, main, nx, ny, area_pct, pt, tstate):
 # aide clavier sous forme de BOUTONS, regroupes en MATRICE par type. Chaque bouton
 # porte un index STABLE (voir _help_btn_for_key) ; il s'eclaire a la pression de sa
 # touche. Groupes = colonnes empilees, alignees en bas a gauche.
+_BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
+_BTN_TARGET = 12                     # index du bouton taille de surface cible (+/-)
+_BTN_SPEED = 9                       # index du bouton vitesse moteur (Page-Up/Down)
+_BTN_GAMEPAD = 17                    # index du bouton manette (pastille etat connexion)
+_BTN_TACHO = 18                      # index du bouton tachymetre optique des roues (W)
 _HELP_GROUPS = [
     ("MOTION", [(16, "O", "moteurs"), (0, "Fleches", "direction"),
-                (2, "Espace", "STOP"), (9, "PgU/D", "vitesse")]),
+                (2, "Espace", "STOP"), (9, "PgU/D", "vitesse"),
+                (_BTN_TACHO, "W", "tachy")]),
     ("CAMERA", [(3, "Maj+Fl", "pan/tilt"), (4, "C", "centre"), (11, "V", "cam"),
                 (12, "+/-", "cible")]),
     ("SUIVI", [(5, "F", "suivi"), (6, "M", "detecteur"),
@@ -593,10 +659,6 @@ _HELP_GROUPS = [
     ("RECO", [(13, "R", "reco"), (15, "A", "acquis."), (14, "G", "apprend.")]),
     ("SYSTEME", [(17, "Manette", "BT"), (10, "Echap", "quitter")]),
 ]
-_BTN_CAM = 11                        # index du bouton bascule camera (interne/externe)
-_BTN_TARGET = 12                     # index du bouton taille de surface cible (+/-)
-_BTN_SPEED = 9                       # index du bouton vitesse moteur (Page-Up/Down)
-_BTN_GAMEPAD = 17                    # index du bouton manette (pastille etat connexion)
 
 
 def _shift_down():
@@ -664,7 +726,7 @@ def _help_btn_for_key(key):
     if c in ("+", "=", "-"):
         return _BTN_TARGET
     return {"c": 4, "f": 5, "m": 6, "t": 7, "p": 8, "v": _BTN_CAM,
-            "r": 13, "a": 15, "g": 14, "o": 16}.get(c, None)
+            "r": 13, "a": 15, "g": 14, "o": 16, "w": _BTN_TACHO}.get(c, None)
 
 
 def _draw_help_matrix(frame, active, cam_src, target_size=None, accent=None, speed=None,
@@ -841,6 +903,7 @@ class RobotControlCore:
         self.gamepad = None                      # node manette de jeu (optionnel)
         self.recognition = None                  # node reconnaissance de visage (optionnel)
         self.train = None                        # node dedie a l'apprentissage (optionnel)
+        self.tacho = None                        # node tachymetre optique des roues (optionnel)
         self.server = None                       # serveur de commandes MCP (gateway)
         self.mcfg = None                         # config metriques (HMI/MCP/log), cf. setup()
 
@@ -852,6 +915,8 @@ class RobotControlCore:
         self._hold_prev = (0, 0)     # dernier (fwd, turn) sonde -> republication immediate au changement
         self._servo_seq = 0          # sequence des ServoCmd clavier (messages discrets)
         self._recog_seq = 0          # sequence des commandes reco ponctuelles (train/fichier)
+        self._tacho_seq = 0          # sequence des consignes tachymetre (commande discrete)
+        self._tacho_emit = 0.0       # dernier envoi de la metrique tacho (throttle ~5 Hz)
 
         # --- etat manette (detection de fronts : une action par appui) ----------
         self._gp_prev_buttons = ()   # dernier vecteur de boutons (0/1) vu sur /joy
@@ -1009,8 +1074,13 @@ class RobotControlCore:
             self.train = FaceTrainNode(args, telemetry=self.tel)
             # servos camera pan/tilt : sur la carte de controle principale (self.link).
             self.servo = ServoNode(args, self.link, telemetry=self.tel)
-            nodes = [self.camera, self.tracking, self.recognition, self.train,
-                     self.servo] + control_nodes
+            # tachymetre optique : APRES la camera, AVANT tout le reste. L'executeur
+            # deroule SET->PROCESS->GET node par node, donc il voit la frame du tour ;
+            # et le HUD n'etant dessine qu'apres spin_once(), il la voit VIERGE.
+            self.tacho = WheelTachoNode(active=bool(getattr(args, "tacho", False)),
+                                        telemetry=self.tel)
+            nodes = [self.camera, self.tacho, self.tracking, self.recognition,
+                     self.train, self.servo] + control_nodes
             if self.grovepi is not None:
                 nodes.append(self.grovepi)
             if self.gamepad is not None:
@@ -1058,6 +1128,14 @@ class RobotControlCore:
             self._recog_seq += 1
         self.executor.publish("/recognition/config", RecognitionConfig(
             mode=mode, command=command, seq=self._recog_seq, path=path, id_lot=id_lot))
+
+    def _publish_tacho(self, active=None, calibrate=False, record_s=0.0, roi=None):
+        """Publie /tacho/config. `seq` incremente a CHAQUE appel : les champs
+        impulsionnels (calibrate, record_s) ne doivent declencher qu'une fois."""
+        self._tacho_seq += 1
+        self.executor.publish("/tacho/config", WheelTachoConfig(
+            seq=self._tacho_seq, active=active, calibrate=calibrate,
+            record_s=record_s, roi=roi))
 
     # -----------------------------------------------------------------------
     # Journalisation par NOUVELLE detection (event detect + transition verrou)
@@ -1112,6 +1190,25 @@ class RobotControlCore:
             self.tel.log("event", msg="set_metrics", spec=m.get("spec"),
                          on=bool(m.get("on")), ok=ok)
             return "Metrique : %s" % msg
+        # --- tachymetre optique des roues -----------------------------------
+        if "tacho" in cfg:
+            if self.tacho is None:
+                return "Tachymetre indisponible (--board-only : pas de camera)."
+            t = cfg["tacho"]                     # {"active":..,"calibrate":..,"record_s":..}
+            self._publish_tacho(active=t.get("active"),
+                                calibrate=bool(t.get("calibrate")),
+                                record_s=float(t.get("record_s") or 0.0),
+                                roi=t.get("roi"))
+            bits = []
+            if t.get("active") is not None:
+                bits.append("armement -> %s" % ("ON" if t["active"] else "off"))
+            if t.get("calibrate"):
+                bits.append("recalibration demandee")
+            if t.get("record_s"):
+                bits.append("capture de %.1f s de profils" % float(t["record_s"]))
+            if t.get("roi"):
+                bits.append("ROI -> %s" % (tuple(t["roi"]),))
+            return "Tachymetre : %s." % (", ".join(bits) or "rien a faire")
         if self.tracking is None:                # --board-only : pas de node suivi
             return "Vision desactivee (--board-only) : commande de suivi ignoree."
         d = cfg.get("detector")
@@ -1401,6 +1498,9 @@ class RobotControlCore:
             self._resize_target(+TARGET_STEP)
         elif c == "-":                           # retrecir la surface cible
             self._resize_target(-TARGET_STEP)
+        elif c == "w":                           # bascule tachymetre optique des roues
+            if self.tacho is not None:
+                self._publish_tacho(active=not self.tacho.active)
         elif c == "o":                           # bascule moteurs ON/OFF (securite)
             self.motion_on = not self.motion_on
             if not self.motion_on:               # a la coupure : cmd_vel(0,0) franc
@@ -1513,6 +1613,7 @@ class RobotControlCore:
             ts = self.executor.latest("/teensy/telemetry")
             joy = self.executor.latest("/joy")
             recog = self.executor.latest("/recognition/result")
+            th = self.executor.latest("/tacho/state")
 
             # 4) cadence d'affichage
             self._disp_n += 1
@@ -1548,6 +1649,9 @@ class RobotControlCore:
                 accent[16] = _C_ON                     # O (index 16) : moteurs armes
             if self.active:
                 accent[5] = _C_ON                      # F (index 5) : suivi arme
+            if th is not None and th.active:
+                # W : vert si les roues sont calibrees, orange tant qu'on cherche
+                accent[_BTN_TACHO] = _C_ON if th.calibrated else _C_WARN
             _rmode = getattr(recog, "mode", "off") if recog is not None else "off"
             if _rmode != "off":
                 # R : vert si un visage est reconnu, orange sinon (actif mais inconnu)
@@ -1575,6 +1679,34 @@ class RobotControlCore:
                             ts=ts, teensy_port=self.teensy_port, gamepad=gp_conn)
             if _hmi(self.mcfg, "recog_badge"):
                 _draw_recog_badge(frame, recog)  # nom/id_pred + score + mode reco
+            if _hmi(self.mcfg, "tacho_rpm") and th is not None and th.active:
+                # anneaux DANS l'image (reperage visuel) + carte haut-centre, dans la
+                # bande libre entre CAM (haut-gauche) et la carte de controle (haut-droit).
+                _draw_tacho_overlay(frame, th)
+                _tx = 336 + max(0, (frame.shape[1] - 328 - 8 - 336 - 320) // 2)
+                _draw_tacho_card(frame, _tx, 8, th)
+            # metrique MCP : throttlee a ~5 Hz (state.json n'est de toute facon
+            # rafraichi qu'au plus une fois par seconde ; le jsonl, lui, tout garde).
+            if th is not None and th.active and now - self._tacho_emit >= 0.2:
+                self._tacho_emit = now
+                self.tel.set("tacho_rpm_sensor",
+                             {"calibrated": bool(th.calibrated),
+                              "fps": round(th.fps, 1),
+                              "roi": [round(v, 4) for v in th.roi],
+                              "recording": round(getattr(th, "recording", 0.0), 1),
+                              "dump": getattr(th, "dump", None),
+                              "note": th.note,
+                              "wheels": [
+                                  {"id": w.get("id"),
+                                   "rpm": (round(w["rpm"], 2)
+                                           if w.get("rpm") is not None else None),
+                                   "theta": (round(w["theta"], 1)
+                                             if w.get("theta") is not None else None),
+                                   "quality": round(w.get("quality") or 0.0, 1),
+                                   "ok": bool(w.get("ok")),
+                                   "alias": int(w.get("alias") or 0)}
+                                  for w in th.wheels]},
+                             cfg=self.mcfg)
             # version applicative (coin bas-gauche) : repere de code charge
             _put(frame, 8, frame.shape[0] - 8, "v" + APP_VERSION, _C_TITLE_OFF, 0.4)
             # panneau log d'apprentissage : pendant le batch, puis ~20 s apres

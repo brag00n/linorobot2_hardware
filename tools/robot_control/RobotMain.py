@@ -290,6 +290,10 @@ def parse_args():
                     help="coupe une metrique (framework v3) : SPEC = <groupe|type> "
                          "(ex. sensor, stm32_rpm) ou <cible>:<groupe|type> "
                          "(ex. hmi:stm32_rpm). Repetable. Cibles : hmi/mcp/log.")
+    # --- tachymetre optique des roues (robot_controlv3, node WheelTachoNode) ---
+    ap.add_argument("--tacho", action="store_true",
+                    help="arme au demarrage le tachymetre optique des roues (RPM lus "
+                         "a la camera sur la marque blanche) ; sinon touche W ou MCP")
     # --- usage sans IHM (pilotage MCP par socket ; voir mcp/gateway.py) ---
     ap.add_argument("--headless", action="store_true",
                     help="sans fenetre ni clavier : garde capture + suivi + "

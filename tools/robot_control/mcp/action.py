@@ -129,6 +129,27 @@ def t_set_metrics(args):
     return _config("set_metrics", {"spec": spec, "on": bool(args.get("on"))})
 
 
+# --- tachymetre optique des roues (robot_controlv3, node WheelTachoNode) ---
+def t_set_tacho(args):
+    a = {}
+    if "on" in args and args["on"] is not None:
+        a["on"] = bool(args["on"])
+    if args.get("calibrate"):
+        a["calibrate"] = True
+    if args.get("record_s"):
+        a["record_s"] = float(args["record_s"])
+    roi = args.get("roi")
+    if roi is not None:
+        if len(roi) != 4 or not all(0.0 <= float(v) <= 1.0 for v in roi):
+            return "roi invalide : attendu [x0,y0,x1,y1] en fractions 0..1."
+        if float(roi[0]) >= float(roi[2]) or float(roi[1]) >= float(roi[3]):
+            return "roi invalide : il faut x0<x1 et y0<y1."
+        a["roi"] = [float(v) for v in roi]
+    if not a:
+        return "rien a faire : fournir au moins on, calibrate, record_s ou roi."
+    return _config("set_tacho", a)
+
+
 # --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
 def t_set_recog_mode(args):
     mode = (args.get("mode") or "").strip().lower()
@@ -265,6 +286,38 @@ TOOLS = [
                          "on": {"type": "boolean",
                                 "description": "true = active, false = coupe"}},
                      "required": ["spec", "on"]}},
+
+    {"name": "set_tacho",
+     "description": "Tachymetre OPTIQUE des roues (robot_controlv3, app requise) : mesure "
+                    "le RPM SIGNE de chaque roue en suivant a la camera la marque blanche "
+                    "peinte sur le flanc. Independant de la carte : sur BambooWS il n'y a "
+                    "qu'un encodeur par cote (voies 3/4 recopiees sur 1/2), donc c'est le "
+                    "seul temoin que la 2e roue d'un cote tourne vraiment. Les 4 actions "
+                    "sont combinables dans un appel, et un champ absent ne change rien : "
+                    "on=armer/desarmer (equivaut a la touche W ; l'armement lance une "
+                    "calibration Hough), calibrate=relancer la detection des cercles "
+                    "(a faire si les roues ont bouge dans le champ), roi=restreindre la "
+                    "zone de recherche (fractions de l'image), record_s=capturer N s de "
+                    "profils angulaires dans un .npz pour rejeu hors ligne "
+                    "(WheelTachoNode.analyze_dump). Lire les RPM : outil tacho de "
+                    "robot-analysis. LIMITE DE CADENCE : une seule marque par roue, donc "
+                    "le signe se perd au-dela d'un demi-tour entre deux images, soit "
+                    "870 RPM a 29 fps ; valide a mieux que 0,5 % jusqu'a ~700 RPM, et "
+                    "tout depassement incremente le compteur 'repliements' (alias) "
+                    "au lieu de mentir en silence.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "on": {"type": "boolean",
+                                "description": "true = armer la mesure, false = desarmer"},
+                         "calibrate": {"type": "boolean",
+                                       "description": "true = relancer la detection Hough "
+                                                      "des 2 roues"},
+                         "record_s": {"type": "number",
+                                      "description": "duree de capture des profils en s "
+                                                     "(0.5..120) -> fichier .npz"},
+                         "roi": {"type": "array", "items": {"type": "number"},
+                                 "description": "[x0,y0,x1,y1] en fractions 0..1 "
+                                                "(defaut : bas-droit de l'image)"}}}},
 
     # --- reconnaissance de visage (robot_controlv3, node reco ; app requise) ---
     {"name": "set_recog_mode",
@@ -482,6 +535,7 @@ HANDLERS = {
     "set_predict_mode": t_set_predict_mode,
     "set_tracking": t_set_tracking,
     "set_metrics": t_set_metrics,
+    "set_tacho": t_set_tacho,
     "set_recog_mode": t_set_recog_mode,
     "train_faces": t_train_faces,
     "recognize_image": t_recognize_image,

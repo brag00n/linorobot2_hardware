@@ -273,6 +273,54 @@ def t_capture(args):
             % (LOGS.snapshot, age, size))
 
 
+def t_tacho(args):
+    """RPM optique des roues (metrique tacho_rpm) : instantane state.json + serie jsonl."""
+    state = LOGS.read_state()
+    if state is None:
+        return ("Aucune telemetrie (%s absent). L'app robot_controlv3 est-elle lancee "
+                "(sans --no-telemetry) ?" % LOGS.state)
+    rec = state.get("last", {}).get("metric:tacho_rpm_sensor")
+    if rec is None:
+        return ("Aucune metrique tachymetre. Le node n'est pas arme : "
+                "robot-action set_tacho(on=true) -- ou la touche W sur l'app -- puis "
+                "reessayer. (Ou la metrique 'tacho_rpm' a ete coupee par set_metrics.)")
+    v = rec.get("value", {})
+    age = round(time.time() - rec.get("t", 0), 1)
+    out = ["calibre   : %s        cadence mesure : %s fps"
+           % ("OUI" if v.get("calibrated") else "NON (recherche des cercles)",
+              v.get("fps")),
+           "roi       : %s" % (v.get("roi"),)]
+    if v.get("note"):
+        out.append("note      : %s" % v["note"])
+    if v.get("recording"):
+        out.append("capture   : %s s restantes -> .npz" % v["recording"])
+    if v.get("dump"):
+        out.append("dernier enregistrement : %s  (rejeu : WheelTachoNode.analyze_dump)"
+                   % v["dump"])
+    for w in v.get("wheels") or []:
+        out.append("roue %-2s   : rpm=%-8s angle=%-6s qualite=%-5s %s%s"
+                   % (w.get("id"), w.get("rpm"), w.get("theta"), w.get("quality"),
+                      "" if w.get("ok") else "MARQUE PERDUE",
+                      ("  repliements=%d" % w["alias"]) if w.get("alias") else ""))
+    out.append("maj       : il y a %ss   (state.json rafraichi au plus 1x/s)" % age)
+    n = int(args.get("n") or 0)
+    if n > 0:
+        recs = [r for r in LOGS.read_records(types={"metric"})
+                if r.get("name") == "tacho_rpm_sensor"][-n:]
+        if not recs:
+            out.append("\nhistorique : vide (cible 'log' de la metrique coupee ?)")
+        else:
+            out.append("\nhistorique (%d ech., cible log du jsonl) :" % len(recs))
+            t0 = recs[0].get("t", 0)
+            for r in recs:
+                wl = r.get("value", {}).get("wheels") or []
+                out.append("  +%6.2fs  %s" % (r.get("t", 0) - t0,
+                                              "  ".join("%s=%s" % (w.get("id"),
+                                                                   w.get("rpm"))
+                                                        for w in wl)))
+    return "\n".join(out)
+
+
 def t_gamepad(args):
     """Etat de la manette de jeu (metrique gamepad_input) lue dans state.json."""
     state = LOGS.read_state()
@@ -374,6 +422,19 @@ TOOLS = [
                     "et plage de vitesse min/max courante. Point vert/rouge equivalent "
                     "au bouton MANETTE du HUD.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "tacho",
+     "description": "RPM OPTIQUE des roues (metrique tacho_rpm, lecture des logs) : par "
+                    "roue, angle courant de la marque, RPM signe (+ = sens anti-horaire "
+                    "a l'ecran), qualite du marqueur et compteur de repliement. Armer la "
+                    "mesure avec set_tacho de robot-action. DEUX CADENCES : l'instantane "
+                    "vient de state.json, rafraichi au plus 1x/s (donc age <=1 s), tandis "
+                    "que la serie complete est dans le jsonl a ~5 Hz -- demander n>0 pour "
+                    "la voir (utile pour juger d'une convergence de PID).",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "n": {"type": "integer",
+                               "description": "nb d'echantillons d'historique a afficher "
+                                              "depuis le jsonl (0 = instantane seul)"}}}},
     {"name": "mark",
      "description": "Pose un repere temporel ; tail/analyze avec since_mark "
                     "repartiront de cet instant (pour isoler un essai).",
@@ -390,6 +451,7 @@ HANDLERS = {
     "analyze": t_analyze,
     "capture": t_capture,
     "gamepad": t_gamepad,
+    "tacho": t_tacho,
     "mark": t_mark,
 }
 

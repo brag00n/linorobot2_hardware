@@ -49,6 +49,10 @@ REGISTRY = {
     "recog_badge":   ("quality",  "info"),
     "train_log":     ("event",    "info"),
     "gamepad_input": ("actuator", "info"),
+    # Tachymetre optique : mesure des roues par la camera, INDEPENDANTE de la
+    # carte (qui recopie ses voies 3/4 sur 1/2 et ne peut donc pas temoigner).
+    "tacho_rpm":     ("sensor",   "info"),
+    "tacho_calib":   ("event",    "info"),
 }
 
 

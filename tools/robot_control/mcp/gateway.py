@@ -37,7 +37,7 @@ DEFAULT_PORT = 8787
 # suivi/vision, pas la carte). Les autres commandes sont des commandes CARTE.
 CONFIG_CMDS = {"set_detector", "set_track_mode", "set_predict_mode", "set_tracking",
                "set_recog_mode", "train_faces", "recognize_image", "acquire_image",
-               "set_metrics"}
+               "set_metrics", "set_tacho"}
 
 CAR_TYPE_LABELS = {
     0x01: "CAR_MECANUM", 0x02: "CAR_MECANUM_MAX", 0x03: "CAR_MECANUM_MINI",
@@ -69,6 +69,22 @@ def config_from(cmd, args):
     if cmd == "set_metrics":
         return {"metrics": {"spec": (args.get("spec") or "").strip(),
                             "on": bool(args.get("on"))}}
+    # --- tachymetre optique des roues (robot_controlv3, node WheelTachoNode) ----
+    # Une seule commande porte les 4 actions : armer/desarmer, recalibrer, fixer la
+    # ROI, capturer N s de profils. Les champs absents ne changent RIEN (le node
+    # distingue None de False) -> un appel « calibrate seul » ne desarme pas.
+    if cmd == "set_tacho":
+        cfg = {}
+        if args.get("on") is not None:
+            cfg["active"] = bool(args.get("on"))
+        if args.get("calibrate"):
+            cfg["calibrate"] = True
+        if args.get("record_s"):
+            cfg["record_s"] = float(args.get("record_s"))
+        roi = args.get("roi")
+        if roi:
+            cfg["roi"] = [float(v) for v in roi]
+        return {"tacho": cfg}
     return {}
 
 

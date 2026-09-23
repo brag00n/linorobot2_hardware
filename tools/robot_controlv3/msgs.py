@@ -16,6 +16,8 @@ Graphe des topics (voir RobotMain) :
   /teensy/telemetry  TeensyTelemetry Teensy  -> Core          (3e carte Teensy, meme protocole, sans magneto)
   /grovepi/telemetry GrovePiTelemetry GrovePi -> Core          (ultrasons + IMU, liaison)
   /joy               JoyMsg          Gamepad -> Core          (manette : axes+boutons+croix)
+  /tacho/config      WheelTachoConfig Core   -> WheelTacho    (touche W, MCP : armement/calibration)
+  /tacho/state       WheelTachoState WheelTacho -> Core       (RPM optique par roue + qualite)
 """
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple, List
@@ -291,3 +293,45 @@ class JoyMsg:
     axes: Tuple[float, ...] = ()
     buttons: Tuple[int, ...] = ()
     hats: Tuple[Tuple[int, int], ...] = ()
+
+
+@dataclass
+class WheelTachoConfig:
+    """Consigne du tachymetre optique (Core -> WheelTacho ; touche W et MCP).
+
+    `seq` porte le motif de COMMANDE DISCRETE deja utilise par RecognitionConfig :
+    le node ne relit la consigne que sur changement de seq, ce qui permet a des
+    champs impulsionnels (`calibrate`, `record_s`) de declencher une action une
+    seule fois au lieu d'etre reappliques a chaque tour.
+    """
+    seq: int = 0
+    active: Optional[bool] = None        # armement (None = inchange)
+    calibrate: bool = False              # impulsion : relancer la detection Hough
+    record_s: float = 0.0                # impulsion : capturer N s de profils
+    roi: Optional[Tuple[float, float, float, float]] = None  # (x0,y0,x1,y1) en fractions
+
+
+@dataclass
+class WheelTachoState:
+    """Mesure du tachymetre optique (WheelTacho -> Core, puis metrique MCP).
+
+    `wheels` est une liste de dicts (un par roue suivie, ordonnee de gauche a
+    droite DANS L'IMAGE) : id, centre/rayon en pixels, rayon de la marque, angle
+    courant, `rpm` SIGNE (+ = anti-horaire a l'ecran ; convention d'image, pas de
+    robot), `quality` = saillance du pic en niveaux de gris (c'est aussi le critere
+    de validite), `ok`, et `alias` = nombre de sauts angulaires trop grands pour la
+    cadence (temoin de repliement : un RPM peut alors etre faux en signe).
+
+    `recording` = secondes restantes de capture de profils (0 = pas de capture) et
+    `dump` = chemin du dernier .npz ecrit, rejouable par
+    WheelTachoNode.analyze_dump() pour l'analyse a posteriori.
+    """
+    seq: int = 0
+    active: bool = False
+    calibrated: bool = False
+    wheels: List[dict] = field(default_factory=list)
+    fps: float = 0.0
+    roi: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+    note: str = ""
+    recording: float = 0.0
+    dump: Optional[str] = None
