@@ -11,6 +11,12 @@ CAPTEURS (grovepi). Cela permet de basculer proprement entre robots :
 setup() (robot_controlv3) instancie alors un node par carte et le HUD empile toutes
 les cartes presentes.
 
+La GEOMETRIE n'appartient PAS a ces profils : elle vient de la source unique du depot ROS
+frere, `linorobot2/bamboo_base/config/robots/<robot>.yaml` (cf. CANONICAL_DIR), exposee par
+resolve() dans `args.geometry` -- avec les trois grandeurs qu'exige setWheelGeom (cpr,
+circonference et APB en millimetres bruts, unites du protocole MAVLink). Sans le depot
+frere, on retombe sur le seul `cpr` que portent les profils, et `source` le dit.
+
 Resolution (resolve) : lit le profil du robot choisi puis applique les SURCHARGES
 CLI par carte (--port/--baud pour la STM32, --esp32-port pour l'ESP32, --teensy-port
 pour le Teensy, --grovepi-port pour les capteurs ; --no-esp32/--no-teensy/--no-grovepi
@@ -19,6 +25,7 @@ desactivent). Les valeurs
 PRINCIPALE pour les chemins existants (bannieres, telemetrie, gateway MCP).
 """
 import json
+import math
 import os
 import threading
 
@@ -29,6 +36,55 @@ DEFAULT_ROBOT = "bamboo4WD_V4_YBStm32"
 # Les cartes d'un banc persistent leur port en parallele (threads lecteurs) ->
 # read-modify-write du meme fichier serialise.
 _PERSIST_LOCK = threading.Lock()
+
+
+# Source unique de verite PHYSIQUE : elle vit dans le depot ROS frere, clone a cote de
+# celui-ci (bamboo_base/config/robots/<robot>.yaml). Les profils JSON ci-dessous ne
+# portent que des faits d'HOTE (port COM, baud, VID:PID) ; la geometrie vient de la.
+CANONICAL_DIR = os.path.normpath(os.path.join(
+    _HERE, "..", "..", "..", "linorobot2", "bamboo_base", "config", "robots"))
+
+# Cles physiques lues dans le YAML canonique (toutes scalaires, une par ligne).
+_GEOM_KEYS = ("car_type", "counts_per_rev", "wheel_diameter_m", "wheel_separation_m",
+              "motor_max_rpm", "motor_operating_voltage", "motor_power_max_voltage",
+              "pid_kp", "pid_ki", "pid_kd")
+
+
+def _read_canonical(robot_name):
+    """Lit les cles physiques du YAML canonique du robot. {} si indisponible.
+
+    PyYAML n'est pas une dependance du tooling (cf. requirements.txt) : on l'utilise s'il
+    est la, sinon on rabat sur un balayage des scalaires `cle: valeur`, suffisant car le
+    fichier est le notre et n'a qu'un niveau d'imbrication. Toute defaillance (depot frere
+    absent, fichier illisible) est silencieuse : l'appelant retombe sur le profil JSON.
+    """
+    path = os.path.join(CANONICAL_DIR, f"{robot_name}.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return {}
+    try:
+        import yaml  # optionnel
+        params = yaml.safe_load(text)["/**"]["ros__parameters"]
+        return {k: params[k] for k in _GEOM_KEYS if k in params}
+    except ImportError:
+        pass
+    except Exception:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key, val = key.strip(), val.strip()
+        if key in _GEOM_KEYS and val:
+            try:
+                out[key] = float(val)
+            except ValueError:
+                pass
+    return out
 
 
 def available():
@@ -98,6 +154,13 @@ def resolve(args):
     prof = load(name)
     args.robot = name
     args.robot_label = prof.get("label", name)
+    # La cle `name` en tete de profil n'etait jamais lue. Elle sert d'identifiant du robot
+    # (et de nom du fichier canonique du depot frere) ; un ecart avec le nom de fichier est
+    # une erreur de redaction du profil, signalee plutot que subie.
+    args.robot_id = prof.get("name") or name
+    if args.robot_id != name:
+        print("[robot_profile] AVERTISSEMENT : profil %s.json declare name=%s "
+              "(le nom de fichier fait foi pour --robot)" % (name, args.robot_id))
 
     # --- cartes de controle (dict unique ou liste pour un banc) ---
     ctrl_raw = prof.get("control")
@@ -176,13 +239,34 @@ def resolve(args):
             "index": g.get("index", 0),          # numero de manette SDL (0 = premiere)
             "deadzone": g.get("deadzone", 0.12),  # zone morte des sticks (fraction)
             "expo": g.get("expo", 0.35),          # courbe expo (finesse au centre)
-            "enabled": not getattr(args, "no_gamepad", False),
+            # La cle `enabled` du profil etait ecrasee sans condition : une manette
+            # desactivee dans le JSON etait activee quand meme. Le CLI ne peut plus que
+            # DESACTIVER (--no-gamepad), jamais ressusciter ce que le profil a coupe.
+            "enabled": bool(g.get("enabled", True)) and not getattr(args, "no_gamepad", False),
         }
         if getattr(args, "gamepad_index", None) is not None:
             gamepad["index"] = args.gamepad_index
         if getattr(args, "gamepad_deadzone", None) is not None:
             gamepad["deadzone"] = args.gamepad_deadzone
     args.gamepad = gamepad
+
+    # --- geometrie physique (source unique du depot frere, repli sur le profil) ---
+    # setWheelGeom() exige les TROIS grandeurs (cpr, circonference, APB) ; le profil JSON
+    # n'a jamais porte que `cpr`. On prefere donc le YAML canonique, et on ne retombe sur
+    # le profil que s'il est introuvable. circ_mm / apb_mm sont deja dans l'unite du
+    # protocole MAVLink (millimetres bruts, idx 16 et 17).
+    canon = _read_canonical(args.robot_id)
+    geometry = {"source": "canonical" if canon else "profile"}
+    if canon:
+        geometry.update({k: canon[k] for k in canon})
+        geometry["cpr"] = canon.get("counts_per_rev")
+    else:
+        primary_cpr = next((c.get("cpr") for c in ctrl_list if c.get("cpr")), None)
+        geometry["cpr"] = float(primary_cpr) if primary_cpr else None
+    d, sep = geometry.get("wheel_diameter_m"), geometry.get("wheel_separation_m")
+    geometry["circ_mm"] = round(math.pi * d * 1000.0, 1) if d else None
+    geometry["apb_mm"] = round(sep / 2.0 * 1000.0, 1) if sep else None
+    args.geometry = geometry
 
     # --- valeurs legacy (bannieres/telemetrie/gateway) = carte de controle principale ---
     primary = next((c for c in controls if c["enabled"]),
