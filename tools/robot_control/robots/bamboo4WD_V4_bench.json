@@ -19,7 +19,7 @@
       ],
       "port": "COM6",
       "baud": 921600,
-      "cpr": 2114,
+      "cpr": 2100,
       "protocol": "mavlink"
     },
     {

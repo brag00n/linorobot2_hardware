@@ -18,18 +18,22 @@
 // par sendVersion() : STATUSTEXT + AUTOPILOT_VERSION.
 #include "fw_version.h"
 
-// Geometrie roue : memes placeholders que ConnectorSerialFrame tant que la
-// geometrie reelle de la Waveshare n'est pas mesuree (cf. caveat calibration).
+// Geometrie roue : memes replis que ConnectorSerialFrame, alignes sur les
+// amorcages de config/custom/bamboov310_config.h. Les anciennes valeurs (2114,
+// 0.8 m de diametre, 1.3 m de voie) etaient des placeholders sans source : un
+// diametre 10x trop grand demande 10x moins de RPM pour la meme consigne, donc
+// une consigne normale tombait a ~1 % du plafond moteur. Ils ne s'appliquent que
+// si config.h ne definit rien, mais un repli absurde est un piege muet.
 #include "config.h"
 
 #ifndef COUNTS_PER_REV1
-#define COUNTS_PER_REV1 2114
+#define COUNTS_PER_REV1 2100
 #endif
 #ifndef WHEEL_DIAMETER
-#define WHEEL_DIAMETER 0.8
+#define WHEEL_DIAMETER 0.08
 #endif
 #ifndef LR_WHEELS_DISTANCE
-#define LR_WHEELS_DISTANCE 1.3
+#define LR_WHEELS_DISTANCE 0.125
 #endif
 
 #define WSM_CPR      ((float)(COUNTS_PER_REV1))

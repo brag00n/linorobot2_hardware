@@ -6,7 +6,7 @@
     "vid_pid": ["10C4:EA60"],
     "port": "COM8",
     "baud": 921600,
-    "cpr": 1650,
+    "cpr": 2100,
     "protocol": "mavlink"
   },
   "sensors": {

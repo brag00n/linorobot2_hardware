@@ -103,12 +103,12 @@ ROBOT ORIENTATION
 // repousse a chaque connexion. Valeurs constructeur du kit WaveShare "UGV Rover"
 // (depot waveshareteam/ugv_base_general, General_Driver/ugv_config.h, mainType 02) :
 // ONE_CIRCLE_PLUSES 1650, WHEEL_D 0.0800 m, TRACK_WIDTH 0.172 m. << NON MESURE >>
-#define COUNTS_PER_REV1 1650              // wheel1 encoder's no of ticks per rev
-#define COUNTS_PER_REV2 1650              // wheel2 encoder's no of ticks per rev
-#define COUNTS_PER_REV3 1650              // recopie de 1 : une seule voie d'encodeur a gauche
-#define COUNTS_PER_REV4 1650              // recopie de 2 : une seule voie d'encodeur a droite
+#define COUNTS_PER_REV1 2100              // wheel1 encoder's no of ticks per rev
+#define COUNTS_PER_REV2 2100              // wheel2 encoder's no of ticks per rev
+#define COUNTS_PER_REV3 2100              // recopie de 1 : une seule voie d'encodeur a gauche
+#define COUNTS_PER_REV4 2100              // recopie de 2 : une seule voie d'encodeur a droite
 #define WHEEL_DIAMETER 0.08               // wheel's diameter in meters
-#define LR_WHEELS_DISTANCE 0.172          // distance between left and right wheels
+#define LR_WHEELS_DISTANCE 0.125          // distance between left and right wheels
 #define PWM_BITS 8                          // PWM Resolution of the microcontroller
 #define PWM_FREQUENCY 100000           // PWM Frequency in Hz
 
