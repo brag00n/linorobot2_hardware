@@ -561,6 +561,22 @@ class RobotComSerial:
         return self._write(self._codec.set_motor_pid(kp, ki, kd, save=save,
                                                       motor_id=motor_id, disable=disable))
 
+    def setBoardLogLevel(self, level):
+        """Seuil du journal de la carte (MAV_SEVERITY 0 EMERGENCY .. 7 DEBUG).
+
+        Retourne (ok, err). Propre au protocole MAVLink : le protocole de trames Yahboom
+        n'a pas de journal, d'ou un refus NOMME plutot qu'un envoi muet -- l'appelant
+        (driver ROS) peut alors le dire a l'utilisateur au lieu de laisser croire au
+        reglage. Voir drainLogs() pour la consommation des lignes.
+        """
+        builder = getattr(self._codec, "set_log_level", None)
+        if builder is None:
+            return False, "journal de carte non porte par ce protocole (MAVLink requis)."
+        frame, err = builder(level)
+        if err is not None:
+            return False, err
+        return self._write(frame), None
+
     def setYawPid(self, kp, ki, kd, save=False):
         """PID de cap/yaw (persiste en flash si save)."""
         return self._write(self._codec.set_yaw_pid(kp, ki, kd, save=save))

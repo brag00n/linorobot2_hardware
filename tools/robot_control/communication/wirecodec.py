@@ -235,6 +235,13 @@ _PARAM_NAMES = [
     "YAW_KP", "YAW_KI", "YAW_KD",
     "WHEEL_CPR", "WHEEL_CIRC", "WHEEL_APB",
     "CAR_TYPE",
+    # Index 19, AJOUTE APRES le contrat fige 0-18 : un hote qui l'ignore lit les 19
+    # premiers index a l'identique. Seuil de severite du journal de la carte
+    # (MAV_SEVERITY 0..7), ecrit par set_log_level ci-dessous. Volontairement en
+    # ECRITURE SEULE cote hote : l'echo PARAM_VALUE "LOG_LEVEL" n'appartient a aucun
+    # groupe de reassemblage, donc _on_param le laisse tomber -- c'est voulu, la valeur
+    # qui fait foi est celle que l'hote vient d'ecrire.
+    "LOG_LEVEL",
 ]
 _IDX = {name: i for i, name in enumerate(_PARAM_NAMES)}
 
@@ -432,6 +439,21 @@ class MavlinkCodec:
         if save:
             out += self._storage()
         return out, None
+
+    def set_log_level(self, level):
+        """Seuil de journal de la carte (PARAM LOG_LEVEL, idx 19). Retourne (bytes, err).
+
+        Le firmware filtre A LA SOURCE (`severity > logLevel_` -> rien n'est emis) : ce
+        reglage economise donc de la bande passante sur l'UART, partage avec la
+        telemetrie -- il ne fait pas que masquer des lignes cote hote.
+        """
+        try:
+            lv = int(level)
+        except (TypeError, ValueError):
+            return None, "niveau non entier."
+        if not 0 <= lv <= 7:
+            return None, "hors plage : %d (MAV_SEVERITY 0 EMERGENCY .. 7 DEBUG)." % lv
+        return self._param_set("LOG_LEVEL", float(lv)), None
 
     def set_motor_pid(self, kp, ki, kd, save=False, motor_id=0, disable=False):
         # `disable` (recopie sur le voisin) est une specificite Yahboom/STM32 non
