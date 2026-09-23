@@ -1,4 +1,39 @@
+> ## About this fork - the BambooWS robot
+>
+> This repository is **not** upstream
+> [linorobot2_hardware](https://github.com/linorobot/linorobot2_hardware). It is a fork that carries
+> the firmware of **BambooWS** (full identifier `bamboo4WD_V4_WSEsp32`), a robot that is a **deep
+> adaptation** of the linorobot2 lineage rather than one more configuration of it. The upstream text
+> below is kept as-is; wherever BambooWS departs from it, a **`For the robot BambooWS:`** block says
+> how - the surrounding paragraphs are never rewritten.
+>
+> The structural departures, stated here once:
+>
+> - **One control board**: WaveShare **General Driver for Robots** (ESP32-WROOM-32UE), firmware in
+>   [`firmware/esp32_bamboo/`](firmware/esp32_bamboo/), whose **TB6612FNG drives 4 motors but exposes
+>   only 2 odometers** - one encoder per side, not per wheel.
+> - **MAVLink v2 (`bamboo` dialect) as the main transport**, in place of micro-ROS. The microcode
+>   carries and **returns its own version identifier**,
+>   [`ESP32-WROOM-32UE_bamboo vX.Y.Z`](firmware/esp32_bamboo/include/fw_version.h) - the string a
+>   robot cites to pin the revision it runs.
+> - **Geometry, CPR, PID gains and car type are writable at runtime over MAVLink**, where upstream
+>   freezes them into the firmware at compile time. The config header holds **seed values**, not
+>   engraved constants.
+> - **UPS Module 3S power** (3x 18650, 5 V / 5 A out, INA219 monitoring) instead of a direct supply.
+> - **MCP tooling** for board diagnosis and bench actuation, absent upstream.
+>
+> Scope note: BambooWS is built **only** from the WaveShare kit - UPS Module 3S, General Driver
+> board, Raspberry Pi 4, Bluetooth gamepad. The other `firmware/*_bamboo/` directories (Yahboom
+> STM32F103RCT6, Teensy, GrovePi+, UnitV2) are **code kept for future use**: they are not part of
+> this robot and are not documented as variants of it.
+>
+> Full detail, robot side: [`../linorobot2/docs/bamboo4WD_V4_WSEsp32.md`](../linorobot2/docs/bamboo4WD_V4_WSEsp32.md).
+
 ## Build status
+> **For the robot BambooWS:** the upstream CI badges below track the upstream branches. This fork
+> develops on `humble_develop_bamboov4` and is built locally with PlatformIO, naming the environment
+> explicitly (see *Installation*).
+
 <!-- Build Status populated by Github Actions runs -->
 ROS 2 Distro | Branch | Build status
 :----------: | :----: | :----------:
@@ -8,6 +43,19 @@ ROS 2 Distro | Branch | Build status
 **Foxy** | [`foxy`](../../tree/foxy) | [![Foxy Firmware Build](../../actions/workflows/foxy-firmware-build.yml/badge.svg?branch=foxy)](../../actions/workflows/foxy-firmware-build.yml?branch=foxy)
 
 ## Installation
+> **For the robot BambooWS:** the firmware lives in
+> [`firmware/esp32_bamboo/`](firmware/esp32_bamboo/) and builds with **PlatformIO**, but the
+> environment must be **named explicitly** - `default_envs` points elsewhere:
+>
+> ```bash
+> cd firmware/esp32_bamboo
+> pio run -e bamboov3-wirshare_bamboo_mavlink
+> ```
+>
+> ROS 2 itself is never installed on this machine: the stack runs in Docker on the Pi. The udev rule
+> matters here, and it needs care - both onboard CP2102 bridges share the same VID:PID
+> (`10C4:EA60`), so rules must match on the **serial number**, never on VID:PID alone.
+
 All software mentioned in this guide must be installed on the robot computer.
 
 ### 1. ROS2 and linorobot2 installation
@@ -43,6 +91,19 @@ and copy the file to /etc/udev/rules.d :
     sudo apt install screen
 
 ## Building the robot
+> **For the robot BambooWS:** one board does everything - the WaveShare **General Driver for
+> Robots** (ESP32-WROOM-32UE). What matters when wiring it:
+>
+> - **TB6612FNG, two channels for four motors**: M3 reuses M1's pins and M4 reuses M2's, command and
+>   encoder alike. So **4 motors are driven but only 2 odometers exist**, one per side, and encoder
+>   channels 3 and 4 are duplicates of 1 and 2.
+> - **IMU**: QMI8658C (accel + gyro) and AK09918C (magnetometer), on the board's own I2C.
+> - **Power**: **UPS Module 3S** feeds the Pi its 5 V / 5 A upstream of the polyfuse; charging is
+>   through the DC5521 barrel jack at 12.6 V **only**.
+> - Connector-by-connector pinout, including the LIDAR port H7 and the ST3215 servo bus:
+>   [`firmware/esp32_bamboo/README.md`](firmware/esp32_bamboo/README.md). Power board:
+>   [`docs/hardware_waveshare_ups_module_3s.md`](docs/hardware_waveshare_ups_module_3s.md).
+
 
 ### 1. Robot orientation
 Robot Orientation:
@@ -129,7 +190,26 @@ A more advanced setup with a 19V powered computer and USB hub connected to senso
 For bigger robots, you can add an emergency switch in between the motor drivers' power supply and motor drivers.
 
 ## Setting up the firmware
+> **For the robot BambooWS:** this is the **major divergence**. The board's configuration is not
+> compiled in and left there - see the block on *Robot Settings* just below.
+
 ### 1. Robot Settings
+> **For the robot BambooWS:** `config/custom/bamboov310_config.h` holds **seed values only**.
+> Geometry (`WHEEL_DIAMETER`, `LR_WHEELS_DISTANCE`), `COUNTS_PER_REV*`, PID gains and car type are
+> **written at runtime over MAVLink** by the ROS driver, from the robot's single canonical
+> configuration file. The wire contract is an **index order**, identical to the other boards so one
+> host codec serves all: indices 0-11 `MOTn_KP/KI/KD`, 12-14 `YAW_*`, 15-17
+> `WHEEL_CPR`/`WHEEL_CIRC`/`WHEEL_APB`, 18 `CAR_TYPE`, all `REAL32`. **`WHEEL_CIRC` and `WHEEL_APB`
+> are raw millimetres** - not the fixed x10 scaling of the legacy Yahboom protocol.
+>
+> Two consequences worth knowing before touching anything:
+>
+> - **No persistence on ESP32** (no NVS, no EEPROM): `MAV_CMD_PREFLIGHT_STORAGE` honestly answers
+>   `UNSUPPORTED`, and the driver pushes the configuration again on every connection, so a board
+>   reboot costs nothing.
+> - **The four motors share one PID triplet** on this board, unlike the STM32 firmware which
+>   addresses each motor.
+
 Go to the config folder and open lino_base_config.h. Uncomment the base, motor driver and IMU you want to use for your robot. For example:
 
     #define LINO_BASE DIFFERENTIAL_DRIVE
@@ -213,6 +293,13 @@ Constants' Meaning:
 - **PWM_FREQUENCY** - Frequency of the PWM signals used to control the motor drivers. You can use the default value if you're unsure what to put here. More info [here](https://www.pjrc.com/teensy/td_pulse.html).
 
 ### 2. Hardware Pin Assignments
+> **For the robot BambooWS:** the pin table below is upstream's. For this board, what you actually
+> wire to are **connectors**, documented one by one in
+> [`firmware/esp32_bamboo/README.md`](firmware/esp32_bamboo/README.md): motor ports M1..M4 (and which
+> of them share a bridge channel), LIDAR port **H7** with its pinout, the two Type-C ports, the
+> **ST3215** serial servo bus, the I2C header, and the 40-pin host header. Note there is **no camera
+> connector at all** on this board - the module is not an ESP32-CAM.
+
 Only modify the pin assignments under the motor driver constant that you are using ie. `#ifdef USE_GENERIC_2_IN_MOTOR_DRIVER`. You can check out PJRC's [pinout page](https://www.pjrc.com/teensy/pinout.html) for each board's pin layout.
 
 The pin assignments found in lino_base_config.h are based on Linorobot's PCB board. You can wire up your electronic components based on the default pin assignments but you're also free to modify it depending on your setup. Just ensure that you're connecting MOTORX_PWM pins to a PWM enabled pin on the microcontroller and reserve SCL and SDA pins for the IMU, and pin 13 (built-in LED) for debugging.
@@ -281,6 +368,18 @@ Constants' Meaning:
 - **MOTORX_INV** - Flag used to invert the direction of the motor. More on that later.
 
 ## Calibration
+> **For the robot BambooWS:** calibration is done **without reflashing**, through `ros2 param` and
+> MCP, **wheels raised**.
+>
+> - **Counts per revolution**: driver read-only, read `esp32_status.encoders` over MCP, turn one
+>   wheel **by hand exactly 10 turns**, then `cpr = delta / 10`. Repeat on index 1 for the other
+>   side. Channels 3 and 4 are **duplicates** of 1 and 2 - do not calibrate them.
+> - Write the result into the canonical configuration file and `ros2 param load` it; nothing needs to
+>   be recompiled.
+> - A reversed direction is fixed with `MOTORn_INV` / `MOTORn_ENCODER_INV` in the config header
+>   (which does mean a reflash) - **never** by flipping a sign on the ROS side, which would
+>   desynchronise the PID from odometry.
+
 Before proceeding, **ensure that your robot is elevated and the wheels aren't touching the ground**. 
 5.1
 ### 1. Motor Check
@@ -332,6 +431,16 @@ Type `sample` and press the enter key. Verify if all encoder values are now **po
 On the previous instruction where you check the encoder reads for each motor, you'll see that there's also COUNTS PER REVOLUTION values printed on the screen. If you have defined `MOTOR_OPERATING_VOLTAGE` and `MOTOR_POWER_MEASURED_VOLTAGE`, you can assign these values to `COUNTS_PER_REVX` constants in [lino_base_config.h](https://github.com/linorobot/linorobot2_hardware/blob/master/config/lino_base_config.h#L55-L58) to have a more accurate model of the encoder.
 
 ## Upload the firmware
+> **For the robot BambooWS:** upload with **esptool** from the development machine over the Type-C
+> port marked *USB*:
+>
+> ```bash
+> pio run -e bamboov3-wirshare_bamboo_mavlink -t upload
+> ```
+>
+> **Keep the previous binary.** A bad flash immobilises the robot, and this board has no
+> field-recovery path other than reflashing it again over the same port.
+
 Ensure that the robot pass all the requirements before uploading the firmware:
 
 - Defined the correct motor rpm.
@@ -351,6 +460,12 @@ Run:
     pio run --target upload -e <your_teensy_board>
 
 ## Testing the robot
+> **For the robot BambooWS:** there is **no micro-ROS agent** to run. The `bamboo_base` ROS driver
+> speaks MAVLink to the board and publishes the topics; check them through the `ros2-analysis` MCP
+> server or Foxglove. The board's own identity is verifiable on the link: it emits
+> `ESP32-WROOM-32UE_bamboo vX.Y.Z` as a `STATUSTEXT` once after its first heartbeat, and answers
+> `MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES` with `AUTOPILOT_VERSION`.
+
 
 ### 1. Run the micro-ROS agent.
 
@@ -390,9 +505,25 @@ Echo IMU data:
 
 
 ## URDF
+> **For the robot BambooWS:** the URDF is not configured here. Geometry has a **single canonical
+> source** in the ROS repository, passed to the URDF as xacro arguments - see the *URDF* section of
+> [`../linorobot2/README.md`](../linorobot2/README.md).
+
 Once the hardware is done, you can go back to [linorobot2](https://github.com/linorobot/linorobot2#urdf) package and start defining the robot's URDF.
 
 ## Troubleshooting Guide
+> **For the robot BambooWS:** four failure modes are specific to this board and will not be found
+> upstream:
+>
+> - **`stop()` does nothing.** The host's `stop()` sends `BAMBOO_MOTOR_PWM`, whose handler is empty
+>   in this firmware. The only real brake is `sendCmdVel(0, 0)`.
+> - **The control loop runs at 10 Hz**, not the 50 Hz of `UPDATE_FREQ` (which only concerns
+>   micro-ROS). That is the reactivity ceiling, and raising it means reflashing.
+> - **PID gains are shared by all four motors**, so one mechanically stiffer wheel cannot be trimmed
+>   on its own.
+> - **Encoder channels 3 and 4 are copies of 1 and 2** - a "dead encoder" on those channels is the
+>   expected reading, not a fault.
+
 
 ### 1. One of my motor isn't spinning.
 - Check if the motors are powered.
@@ -439,6 +570,10 @@ Once the hardware is done, you can go back to [linorobot2](https://github.com/li
 - This happens due to the same reason as 7. When the motor hits its maximum rpm and fails to reach the target velocity, the PID controller's error continously increases. The abrupt turning motion is due to the PID controller's attempt to further compensate the accumulated error. To fix this, set the `MAX_RPM_RATIO` lower to allow the PID controller to compensate for errors while moving to avoid huge accumulative errors when the robot stops.
 
 ## Developers
+> **For the robot BambooWS:** development happens on `humble_develop_bamboov4`. Conventions in this
+> fork: **commit messages in English**, **code comments in French**, and commits staged with
+> **explicit paths**.
+
 #### Adding firmware compilation tests for a new ROS distro
 To add a new distro to the CI tests, modify the `rolling` (default) branch. Inside of `.github/workflows`, duplicate an existing distro workflow YAML file. For example, to add ROS2 Iron support, one could copy `humble-firmware-build.yml` to `iron-firmware-build.yml`. Assuming that an `iron` branch exists (if not one could create one using the `humble` branch as a base and modify as necessary), inside of `iron-firmware-build.yml`, rename all instances of the word `humble` with `iron`. It would be as simple as using 'find and replace' in many IDEs. Commit these changes to a feature branch, create a PR to merge into the `rolling` branch, and then backport the PR to other branches. It is only necessary to have `iron-firmware-build.yml` on the `rolling` and `iron` branch, however it may be simpler to keep the branches in sync by having every workflow file on all branches.
 
