@@ -169,9 +169,18 @@ class Telemetry:
         self._last_snap = t
         try:
             import cv2
+            # On ENCODE en memoire puis on ecrit les octets : cv2.imwrite deduit le format
+            # de l'EXTENSION, donc un "latest.jpg.tmp" le fait LEVER (extension inconnue).
+            # L'exception etant avalee ci-dessous, l'image n'etait jamais ecrite et l'outil
+            # d'analyse restait aveugle sans le dire. imencode + os.replace garde l'ecriture
+            # atomique (jamais de JPEG tronque lu par un consommateur).
+            ok, buf = cv2.imencode(".jpg", frame)
+            if not ok:
+                return
             tmp = self.snapshot_path + ".tmp"
-            if cv2.imwrite(tmp, frame):
-                os.replace(tmp, self.snapshot_path)
+            with open(tmp, "wb") as fh:
+                fh.write(buf.tobytes())
+            os.replace(tmp, self.snapshot_path)
         except Exception:
             pass
 
