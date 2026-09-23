@@ -14,6 +14,10 @@
 // exactement comme le template STM32 (mav_protocol.c).
 #include "bamboo/mavlink.h"
 
+// Identite du microcode ("ESP32-WROOM-32UE_bamboo vX.Y.Z"), retournee a l'hote
+// par sendVersion() : STATUSTEXT + AUTOPILOT_VERSION.
+#include "fw_version.h"
+
 // Geometrie roue : memes placeholders que ConnectorSerialFrame tant que la
 // geometrie reelle de la Waveshare n'est pas mesuree (cf. caveat calibration).
 #include "config.h"
@@ -102,6 +106,10 @@ bool ConnectorMavlink::listenAgent(long) {
     if (now - lastHeartbeat_ >= 1000) {
         lastHeartbeat_ = now;
         sendHeartbeat();
+        // Banniere d'identite emise UNE fois, juste apres le premier heartbeat :
+        // un hote qui se branche a chaud la recupere sans rien demander, et un
+        // sniff de la liaison suffit a identifier la revision du microcode.
+        if (!versionSent_) { versionSent_ = true; sendVersion(); }
     }
     // 3) tick de controle ~10 Hz : moveBase() + publishData() via le callback
     //    firmware, qui declenche l'auto-emission de la telemetrie.
@@ -289,6 +297,34 @@ void ConnectorMavlink::sendCommandAck(uint16_t command, uint8_t result) {
     sendMessage();
 }
 
+// Identite du microcode, sur deux messages complementaires :
+//  - STATUSTEXT : la forme humaine "ESP32-WROOM-32UE_bamboo v0.1.0", lisible au
+//    sniff et dans QGroundControl sans decodage particulier ;
+//  - AUTOPILOT_VERSION : la forme machine (flight_sw_version empaquete + nom de
+//    carte dans flight_custom_version), reponse standard a
+//    MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES.
+// On n'a PAS ajoute de parametre de version a la table PARAM : son ordre d'index
+// est un contrat de fil identique a celui de la STM32, qu'un ajout casserait.
+void ConnectorMavlink::sendVersion() {
+    mavlink_msg_statustext_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
+                                MAV_SEVERITY_INFO, FW_IDENT_STR, 0, 0);
+    sendMessage();
+
+    // flight_custom_version : 8 octets, on y met le debut du nom de carte (pas de
+    // hash git disponible ici). middleware/os laisses a zero : non pertinents.
+    uint8_t custom[8] = {0};
+    memcpy(custom, FW_BOARD_NAME, 8);
+    const uint8_t zero8[8] = {0};
+    mavlink_msg_autopilot_version_pack(
+        MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
+        MAV_PROTOCOL_CAPABILITY_MAVLINK2 | MAV_PROTOCOL_CAPABILITY_PARAM_FLOAT,
+        FW_VERSION_PACKED, 0, 0, 0,
+        custom, zero8, zero8,
+        0 /* vendor_id */, 0 /* product_id */,
+        0 /* uid */, zero8 /* uid2 */);
+    sendMessage();
+}
+
 void ConnectorMavlink::handleCommandLong() {
     const mavlink_message_t *msg = &s_rx_ready;
     uint16_t cmd = mavlink_msg_command_long_get_command(msg);
@@ -311,6 +347,21 @@ void ConnectorMavlink::handleCommandLong() {
     // Fonctions absentes sur cette carte (servo ST3215 hors perimetre, pas de
     // persistance flash, pas de controleur yaw ni de reset odometrie cote
     // connecteur) : ACK honnete UNSUPPORTED.
+    // Identite du microcode a la demande. REQUEST_AUTOPILOT_CAPABILITIES est la
+    // demande standard ; REQUEST_MESSAGE n'est honore que pour AUTOPILOT_VERSION
+    // (148), les autres messages etant deja emis d'office par le tick.
+    case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES:
+        sendCommandAck(cmd, MAV_RESULT_ACCEPTED);
+        sendVersion();
+        return;
+    case MAV_CMD_REQUEST_MESSAGE:
+        if ((int)p1 == MAVLINK_MSG_ID_AUTOPILOT_VERSION) {
+            sendCommandAck(cmd, MAV_RESULT_ACCEPTED);
+            sendVersion();
+            return;
+        }
+        result = MAV_RESULT_UNSUPPORTED;
+        break;
     case MAV_CMD_DO_SET_SERVO:
     case MAV_CMD_PREFLIGHT_STORAGE:
     case MAV_CMD_USER_1:

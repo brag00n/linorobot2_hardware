@@ -21,6 +21,10 @@
 // ATTITUDE (#30, roll/pitch/yaw), BAMBOO_WHEEL_STATE (vx/vy/wz),
 // BAMBOO_ENCODERS (4x int32), BAMBOO_MAG (mx/my/mz uT, AK09918C).
 // Commandes acceptees : BAMBOO_CMD_VEL, PARAM_*, COMMAND_LONG.
+//
+// Identite du microcode : "ESP32-WROOM-32UE_bamboo vX.Y.Z" (include/fw_version.h),
+// retournee en STATUSTEXT (#253) + AUTOPILOT_VERSION (#148), une fois au
+// demarrage puis sur MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES.
 
 #include "Connector.hpp"
 #include <Arduino.h>
@@ -70,6 +74,7 @@ class ConnectorMavlink : public Connector {
     void sendHeartbeat();
     void sendParam(uint16_t idx);
     void sendCommandAck(uint16_t command, uint8_t result);
+    void sendVersion();               // STATUSTEXT + AUTOPILOT_VERSION (identite microcode)
 
     // --- reception ---
     void parseByte(uint8_t b);        // alimente le parser MAVLink, route sur trame complete
@@ -92,6 +97,7 @@ class ConnectorMavlink : public Connector {
     uint32_t lastTick_ = 0;   // cadence du tick de controle (~10 Hz)
     uint32_t lastHeartbeat_ = 0; // cadence HEARTBEAT (~1 Hz)
     volatile bool gyroCalReq_ = false; // demande de recalibrage gyro en attente
+    bool versionSent_ = false; // banniere d'identite deja emise (une fois au demarrage)
 };
 
 #endif // CONNECTOR_MAVLINK_H
