@@ -251,8 +251,48 @@ Bus partagé avec les trois puces embarquées. Côté firmware, `SDA = GPIO 32`,
 - Brochage **compatible Raspberry Pi** (2×20, pas 2,54 mm) : 5 V, 3,3 V, GND, GPIO, I2C, SPI, UART.
 - Fournit le **5 V** à la carte hôte depuis `NL5V` — **même net que la broche 5V du port lidar**.
 - Accepte un RPi, une Jetson Nano ou une Sunrise X3 Pi.
-- Ce header ne porte **aucune liaison de contrôle** avec le microcode : la carte communique avec
-  l'hôte par le **câble USB** du Type-C n° 9 (§ 4.4), pas par le header.
+- Le contrôle passe par le **câble USB** du Type-C n° 9 (§ 4.4) et non par ce header. Mais le header
+  **partage le net de l'UART de l'ESP32** (GPIO14/15 côté hôte), et c'est un piège coûteux, constaté
+  sur ce robot le 2026-09-22.
+
+  ⚠️ **Le RPi doit laisser son UART au repos, sinon l'hôte ne peut plus rien écrire dans la carte.**
+  Avec `enable_uart=1` dans `/boot/config.txt`, GPIO14 est en fonction **UART TXD**, donc en sortie
+  push-pull **maintenue à l'état haut** — même quand rien n'émet. Cette sortie écrase le CP2102 du
+  Type-C n° 9, qui ne peut plus tirer le RXD de l'ESP32 vers le bas.
+
+  | Observation | Interprétation |
+  |---|---|
+  | `esptool` : « Download mode successfully detected, but getting no sync reply: The serial TX path seems to be down. » | DTR/RTS passent (ils voyagent par l'USB), la voie **TX** est écrasée |
+  | La carte reste parfaitement bavarde (télémétrie à 10 Hz lisible) | le sens carte → hôte n'emprunte pas ce net |
+  | Aucun `cmd_vel` ni `PARAM_SET` n'aboutit | même cause : tout l'aller hôte → carte est muet |
+
+  **D'où vient ce réglage** : ni du firmware RPi, ni de la console série — de **DietPi**. Sur un Pi 4
+  (WiFi/BT intégré) l'UART primaire est le mini-UART `ttyS0`, **désactivé par défaut** côté firmware ;
+  c'est `dietpi-set_hardware` qui injecte `enable_uart=1` sur les modèles RPi. Et le piège est que
+  DietPi dissocie les deux réglages : la **console** série peut être coupée
+  (`CONFIG_SERIAL_CONSOLE_ENABLE=0`, `console=tty1` seul, `serial-getty@*` masqués) alors que le
+  **périphérique** UART reste actif. « Rien n'émet sur le port série » ne veut donc pas dire
+  « la ligne est libre ».
+
+  Diagnostic et remède, dans cet ordre :
+
+  ```bash
+  # 1. Prouver la panne sans rien écrire en flash (script du dépôt ROS) :
+  docker compose --profile tools run --rm -e CHECK_ONLY=1 flash.esp32
+
+  # 2. Libérer la ligne tout de suite, sans reboot (NON persistant) : exporter GPIO14 en
+  #    entrée le retire de la fonction UART.
+  sudo sh -c 'echo 14 > /sys/class/gpio/export'
+  sudo sh -c 'echo in > /sys/class/gpio/gpio14/direction'
+  # `chip_id` répond alors normalement (ESP32-D0WD-V3). Retour arrière : echo 14 > .../unexport
+
+  # 3. Remède durable, par le toggle DietPi pour qu'il ne réinjecte pas la valeur :
+  #    dietpi-config > Advanced Options > Serial/UART, puis reboot.
+  ```
+
+  Rien sur ce robot n'utilise l'UART du RPi : l'ESP32 **et** la carte capteurs passent par USB. Si un
+  jour on voulait piloter la carte par l'UART de ce header plutôt que par l'USB, il faudrait faire
+  l'inverse **et débrancher le Type-C n° 9** : les deux ne peuvent pas coexister sur ce net.
 
 ---
 
