@@ -1,6 +1,15 @@
 # Firmware `esp32_bamboo` — carte WaveShare « General Driver for Robots » (Rev1.2)
 
-Firmware de la **carte de contrôle** du robot **BambooWS** (`bamboo4WD_V4_WSEsp32`).
+Firmware de la carte de contrôle **WaveShare General Driver for Robots**. Ce document décrit la
+**carte** et son **microcode**, indépendamment de tout robot : un robot qui embarque cette carte la
+référence par l'identifiant de version ci-dessous.
+
+> ### Identité du microcode
+> ```
+> ESP32-WROOM-32UE_bamboo v0.1.0
+> ```
+> Définie dans [`include/fw_version.h`](include/fw_version.h) et **retournée par le microcode**
+> (§ 5.1). C'est le seul identifiant à citer pour désigner une révision de ce firmware.
 
 - **Nom constructeur** : WaveShare *General Driver for Robots*, révision **Rev1.2**.
 - **Contrôleur** : **ESP32-WROOM-32UE** (Wi-Fi 2,4 GHz + BLE + ESP-NOW, antenne externe IPEX1).
@@ -104,8 +113,8 @@ Numéros = repères de la nomenclature « onboard resource » du wiki constructe
 - Commutée par l'interrupteur **Power ON/OFF** (n° 12).
 - Alimente **directement** (non régulé) le TB6612FNG et le bus servo ST3215 ; et via **MP8759**
   le rail **5 V** (`NL5V`, hôte + lidar + CP2102), via **AMS1117** le **3,3 V** logique.
-- Sur BambooWS le RPi4 n'est **pas** alimenté par ce rail mais par l'**UPS Module 3S**
-  (rail séparé du bruit moteur) — voir la fiche UPS en § 8.
+- Alimenter la carte hôte depuis ce rail est possible (header 40P, § 4.8) mais l'expose au bruit
+  moteur ; une alimentation séparée de l'hôte est préférable — voir la fiche UPS en § 8.
 
 ### 4.2 Ports moteurs — n° 14/15/16/17 — M1 … M4
 
@@ -179,7 +188,8 @@ Brochage *(schéma)* :
   le header 40P et les CP2102.
 - **Câbler par fonction**, le connecteur du lidar n'étant pas un H7 : `lidar VCC → 5V`,
   `GND → GND`, `lidar Tx → CP_RX`. Données en **TTL 3,3 V**.
-- Sur BambooWS **aucun lidar n'est encore choisi** : ce port est décrit, pas mis en service.
+- Le port est **passif vis-à-vis du microcode** : rien à configurer côté firmware pour mettre un
+  lidar en service, tout se passe côté hôte sur le Type-C n° 8.
 
 ### 4.4 Les deux Type-C — n° 8 (« LIDAR ») et n° 9 (« USB »)
 
@@ -207,15 +217,15 @@ Brochage *(schéma)* :
 - **Non exploité par ce firmware** : `MAV_CMD_DO_SET_SERVO` renvoie `MAV_RESULT_UNSUPPORTED`
   (`lib/_Connectors/ConnectorMavlink.cpp`), et le bloc `ENABLE_DEVICE_SERVO_MOTOR` compile
   `lib/pwm/` qui pilote un **PCA9685** externe (`PCA_BASE`, non défini ici) — donc `initPwm()`
-  est inerte. Aucun servo sur BambooWS.
+  est inerte.
 
 ### 4.6 Caméra
 
 **Cette carte n'a aucun connecteur caméra** : pas de nappe CSI, pas de bus DVP, aucune broche
 caméra sur le header. L'ESP32-WROOM-32UE n'est pas un ESP32-CAM.
 
-Sur BambooWS l'imagerie passe donc **entièrement par le RPi4** (caméra USB côté ROS2). La carte de
-contrôle n'est pas sur ce chemin.
+Toute imagerie relève donc de la **carte hôte** (caméra USB ou CSI côté hôte) : cette carte de
+contrôle n'est pas sur ce chemin et son microcode n'a aucune fonction vidéo.
 
 ### 4.7 Extension I2C — n° 4
 
@@ -241,8 +251,8 @@ Bus partagé avec les trois puces embarquées. Côté firmware, `SDA = GPIO 32`,
 - Brochage **compatible Raspberry Pi** (2×20, pas 2,54 mm) : 5 V, 3,3 V, GND, GPIO, I2C, SPI, UART.
 - Fournit le **5 V** à la carte hôte depuis `NL5V` — **même net que la broche 5V du port lidar**.
 - Accepte un RPi, une Jetson Nano ou une Sunrise X3 Pi.
-- Sur BambooWS ce header **n'alimente pas** le RPi4 (c'est l'UPS 3S qui le fait) : la liaison
-  carte ↔ RPi est le **câble USB** du Type-C n° 9.
+- Ce header ne porte **aucune liaison de contrôle** avec le microcode : la carte communique avec
+  l'hôte par le **câble USB** du Type-C n° 9 (§ 4.4), pas par le header.
 
 ---
 
@@ -250,13 +260,14 @@ Bus partagé avec les trois puces embarquées. Côté firmware, `SDA = GPIO 32`,
 
 Transport de contrôle sélectionné à la compilation, trois options exclusives sur le **même UART
 à 921600 bauds** (`src/firmware.cpp`) : micro-ROS (défaut), trames binaires maison
-(`ENABLE_CONNECTOR_SERIAL_FRAME`), ou **MAVLink v2** (`ENABLE_MAVLINK`). **BambooWS utilise
-MAVLink.**
+(`ENABLE_CONNECTOR_SERIAL_FRAME`), ou **MAVLink v2** (`ENABLE_MAVLINK`). La suite
+décrit le mode **MAVLink**, celui que porte l'identifiant de version de cette carte.
 
 ### 5.1 Identité et cadences
 
 | Élément | Valeur |
 |---|---|
+| **Identité microcode** | **`ESP32-WROOM-32UE_bamboo v0.1.0`** (`include/fw_version.h`) |
 | Dialecte | MAVLink v2 `bamboo` (header-only, `firmware/_common/protocol/mavlink/generated/c`) |
 | `sysid` | **2** (le RPi distingue les cartes par ce champ) |
 | `compid` | **1** (`MAV_COMP_ID_AUTOPILOT1`) |
@@ -264,10 +275,30 @@ MAVLink.**
 | Boucle de contrôle | **10 Hz** (`ConnectorMavlink.cpp`) — et non les 50 Hz de `UPDATE_FREQ`, qui ne concernent que micro-ROS |
 | Concurrence | aucune : ESP32 mono-thread (`loop()`), état TX/RX en portée fichier |
 
+**Comment l'hôte obtient la version.** Le microcode la retourne sur deux messages complémentaires :
+
+| Message | Contenu | Quand |
+|---|---|---|
+| `STATUSTEXT` (#253), sévérité `INFO` | la chaîne lisible `ESP32-WROOM-32UE_bamboo v0.1.0` | **une fois**, juste après le premier heartbeat (donc récupérée par un hôte branché à chaud, et visible au simple sniff de la liaison) |
+| `AUTOPILOT_VERSION` (#148) | `flight_sw_version` = `(major<<24)|(minor<<16)|(patch<<8)`, `flight_custom_version` = 8 premiers octets du nom de carte, `capabilities` = `MAVLINK2 \| PARAM_FLOAT` | à la demande |
+
+La demande se fait par `COMMAND_LONG` :
+
+- `MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES` (520) — demande standard, `ACK ACCEPTED` puis les deux messages ;
+- `MAV_CMD_REQUEST_MESSAGE` (512) avec `param1 = 148` — même effet ; toute autre valeur de `param1`
+  renvoie `UNSUPPORTED`, les autres messages étant déjà émis d'office par le tick.
+
+**La version n'est pas un paramètre.** L'ordre des index de la table `PARAM` (§ 5.4) est un contrat de
+fil identique à celui des autres cartes ; y ajouter une entrée le casserait.
+
+**Règle de version** (semantique, détaillée dans `include/fw_version.h`) : `MAJOR` = rupture du
+contrat de fil (ordre des index `PARAM`, dialecte, `sysid`) ; `MINOR` = fonction nouvelle compatible ;
+`PATCH` = correction sans effet sur le fil.
+
 ### 5.2 Messages émis
 
 `heartbeat`, `bamboo_wheel_state`, `attitude`, `sys_status`, `bamboo_encoders`, `bamboo_mag`,
-`param_value`, `command_ack`.
+`param_value`, `command_ack`, `statustext` + `autopilot_version` (identité, § 5.1).
 
 ### 5.3 Messages traités
 
@@ -278,6 +309,8 @@ MAVLink.**
 |---|---|
 | `MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN` | **supportée** |
 | `MAV_CMD_PREFLIGHT_CALIBRATION` | **supportée** (recalibration gyro à la demande) |
+| `MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES` | **supportée** — renvoie l'identité du microcode (§ 5.1) |
+| `MAV_CMD_REQUEST_MESSAGE` | **supportée pour `param1 = 148`** (`AUTOPILOT_VERSION`) ; `UNSUPPORTED` sinon |
 | `MAV_CMD_DO_SET_SERVO` | `UNSUPPORTED` (§ 4.5) |
 | `MAV_CMD_PREFLIGHT_STORAGE` | `UNSUPPORTED` — **aucune persistance** (ni NVS, ni EEPROM) |
 | `MAV_CMD_USER_1` / `USER_2` | `UNSUPPORTED` |
@@ -356,6 +389,7 @@ Utile pour ne pas chercher des fonctions absentes :
 ## 8. Voir aussi
 
 - [`../../docs/hardware_waveshare_ups_module_3s.md`](../../docs/hardware_waveshare_ups_module_3s.md)
-  — alimentation 5 V du RPi4 (UPS Module 3S).
+  — carte d'alimentation 5 V utilisable avec cette carte (UPS Module 3S).
 - [`../../../linorobot2/docs/bamboo4WD_V4_WSEsp32.md`](../../../linorobot2/docs/bamboo4WD_V4_WSEsp32.md)
-  — intégration ROS2 / linorobot2 du robot (dépôt frère).
+  — exemple d'intégration ROS2 d'un robot bâti sur cette carte (dépôt frère). Le côté robot y
+    référence la version de microcode ci-dessus.
