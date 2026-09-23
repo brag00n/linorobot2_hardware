@@ -321,6 +321,100 @@ def t_tacho(args):
     return "\n".join(out)
 
 
+def t_tacho_stats(args):
+    """RPM optique AGREGE sur une fenetre : integration de l'angle deroule.
+
+    Pourquoi un outil separe de `tacho` : l'instantane de state.json est bruite de
+    +-2 RPM (le centroide de la marque bouge de 1 px d'une frame a l'autre) et il
+    n'est rafraichi qu'1x/s, donc echantillonner a la main tombe a cote des phases
+    de rotation -- constat du banc, ou une rotation reelle a ~17 RPM se lisait
+    « rpm=0 ». La mesure juste sur une fenetre n'est pas une moyenne de RPM
+    instantanes mais l'ANGLE TOTAL PARCOURU divise par la duree : le bruit de
+    centroide ne s'accumule pas, il s'annule entre le premier et le dernier point.
+    """
+    since = LOGS.load_cursor().get("t") if args.get("since_mark") else None
+    window = float(args.get("window_s") or 5.0)
+    if since is None:
+        since = time.time() - window
+    recs = [r for r in LOGS.read_records(types={"metric"}, since=since)
+            if r.get("name") == "tacho_rpm_sensor"]
+    if len(recs) < 2:
+        return ("Moins de 2 echantillons tachymetre dans la fenetre (%.1f s). Armer la "
+                "mesure avec robot-action set_tacho(on=true), verifier que la cible "
+                "'log' de la metrique 'tacho_rpm' n'est pas coupee, puis elargir "
+                "window_s." % window)
+    # Regroupement par roue : les enregistrements portent les deux roues ensemble.
+    per = {}
+    for r in recs:
+        v = r.get("value", {})
+        for w in v.get("wheels") or []:
+            per.setdefault(w.get("id"), []).append(
+                (r.get("t", 0.0), w.get("theta"), w.get("rpm"), w.get("ok"),
+                 w.get("alias") or 0, w.get("quality")))
+    t_span = recs[-1].get("t", 0.0) - recs[0].get("t", 0.0)
+    dts = [recs[i + 1].get("t", 0.0) - recs[i].get("t", 0.0) for i in range(len(recs) - 1)]
+    dt_max = max(dts) if dts else 0.0
+    # Plafond de repliement : le deroulage suppose |dtheta| < 180 deg entre deux
+    # echantillons. Au-dela, un tour rapide est indiscernable d'un petit recul et le
+    # RPM serait faux SANS LE DIRE -- donc on affiche le plafond, toujours.
+    ceil_rpm = (30.0 / dt_max) if dt_max > 0 else 0.0
+    out = ["fenetre   : %.2f s   %d echantillons   cadence journal %.1f Hz "
+           "(dt max %.0f ms)"
+           % (t_span, len(recs), (len(recs) - 1) / t_span if t_span > 0 else 0.0,
+              dt_max * 1000.0),
+           "plafond   : %.0f RPM sans repliement a cette cadence "
+           "(au-dela la mesure est fausse en silence)" % ceil_rpm,
+           "",
+           "roue  n    RPM integre   RPM inst. (med/min/max)   angle parcouru   "
+           "marque   qualite min"]
+    res = {}
+    for wid in sorted(per):
+        ser = per[wid]
+        total = 0.0
+        biggest = 0.0
+        for i in range(len(ser) - 1):
+            a, b = ser[i][1], ser[i + 1][1]
+            if a is None or b is None:
+                continue
+            d = ((float(b) - float(a) + 180.0) % 360.0) - 180.0   # deroulage
+            total += d
+            biggest = max(biggest, abs(d))
+        dur = ser[-1][0] - ser[0][0]
+        rpm_int = total / (6.0 * dur) if dur > 0 else 0.0          # deg/s -> RPM
+        inst = sorted(float(x[2]) for x in ser if x[2] is not None)
+        med = inst[len(inst) // 2] if inst else 0.0
+        lost = sum(1 for x in ser if not x[3])
+        qual = min([x[5] for x in ser if x[5] is not None] or [0])
+        res[wid] = rpm_int
+        out.append("%-5s %-4d %+9.2f     %+6.1f / %+6.1f / %+6.1f      %+8.1f deg     "
+                   "%-8s %5.0f"
+                   % (wid, len(ser), rpm_int, med, inst[0] if inst else 0.0,
+                      inst[-1] if inst else 0.0, total,
+                      "OK" if not lost else "PERDUE %dx" % lost, qual))
+        if biggest > 0.7 * 180.0:
+            out.append("      !! ecart max %.0f deg entre deux echantillons : on approche "
+                       "le plafond de repliement, reduire la vitesse ou relever la "
+                       "cadence du journal" % biggest)
+    # Les deux roues sont du MEME cote : leur ecart est la grandeur utile, puisque la
+    # carte n'a qu'un encodeur par cote et recopie les voies 3/4 sur 1/2.
+    if len(res) == 2:
+        (ia, ra), (ib, rb) = sorted(res.items())
+        ref = max(abs(ra), abs(rb))
+        if ref > 0.5:
+            out += ["", "ecart %s/%s : %.1f %% (%+.2f vs %+.2f RPM)   signes %s"
+                    % (ia, ib, abs(ra - rb) / ref * 100.0, ra, rb,
+                       "COHERENTS" if ra * rb > 0 else "OPPOSES -- anormal sur un meme cote")]
+        else:
+            out += ["", "les deux roues sont a l'arret (|RPM| < 0.5) : rien a comparer."]
+    out += ["",
+            "Comparaison aux ODOMETRES : la carte General Driver n'a qu'un encodeur par "
+            "cote, lu cote ROS. Relever `wheel_rpm` de /esp32_status (MCP ros2-analysis "
+            "echo) SUR LA MEME FENETRE, et le confronter aux deux valeurs ci-dessus : "
+            "l'optique est le seul temoin independant de la 2e roue, dont la voie est une "
+            "recopie firmware."]
+    return "\n".join(out)
+
+
 def t_gamepad(args):
     """Etat de la manette de jeu (metrique gamepad_input) lue dans state.json."""
     state = LOGS.read_state()
@@ -435,6 +529,21 @@ TOOLS = [
                          "n": {"type": "integer",
                                "description": "nb d'echantillons d'historique a afficher "
                                               "depuis le jsonl (0 = instantane seul)"}}}},
+    {"name": "tacho_stats",
+     "description": "RPM OPTIQUE AGREGE sur une fenetre, pour une comparaison chiffree aux "
+                    "odometres. N'est PAS une moyenne des RPM instantanes (bruites de "
+                    "+-2 RPM) : integre l'ANGLE DEROULE parcouru sur la fenetre, donc le "
+                    "bruit s'annule. Donne par roue le RPM integre, la dispersion de "
+                    "l'instantane, l'angle total, les pertes de marque, et l'ECART entre "
+                    "les deux roues du meme cote -- la grandeur utile, la carte n'ayant "
+                    "qu'un encodeur par cote. Affiche aussi le plafond de repliement "
+                    "deduit de la cadence reelle du journal.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "window_s": {"type": "number",
+                                      "description": "profondeur de la fenetre en s "
+                                                     "(defaut 5)"},
+                         "since_mark": _SINCE}}},
     {"name": "mark",
      "description": "Pose un repere temporel ; tail/analyze avec since_mark "
                     "repartiront de cet instant (pour isoler un essai).",
@@ -452,6 +561,7 @@ HANDLERS = {
     "capture": t_capture,
     "gamepad": t_gamepad,
     "tacho": t_tacho,
+    "tacho_stats": t_tacho_stats,
     "mark": t_mark,
 }
 
