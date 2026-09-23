@@ -588,11 +588,34 @@ void pidCallback(const Connector::Pid_t* pPid, String source){
 #endif // ENABLE_DEVICE_PID
 }
 
+// Geometrie recue du fil (MAVLink PARAM_SET idx 15-18) : on convertit les unites du
+// protocole (mm bruts) vers celles de Kinematics (metres) et on applique. Les objets
+// concernes lisent leurs membres A L'APPEL : rien a reconstruire, l'effet est immediat au
+// cycle de controle suivant. Les voies d'encodeur 3 et 4 ne sont pas touchees : ce sont des
+// recopies de 1 et 2 sur cette carte (un seul encodeur par cote).
+void geomCallback(const Connector::Geom_t* pGeom, String source){
+    if (isSyslog) syslog(LOG_INFO, ("   geomCallback: cpr:" + String(pGeom->cpr)
+        + ", circ_mm:" + String(pGeom->circ_mm) + ", apb_mm:" + String(pGeom->apb_mm)
+        + ", car_type:" + String(pGeom->car_type) + "\n").c_str());
+
+    kinematics.setWheelDiameter(pGeom->circ_mm / (1000.0 * PI));
+    kinematics.setWheelsYDistance(2.0 * pGeom->apb_mm / 1000.0);
+    motor1_encoder.setCountsPerRev((int)(pGeom->cpr + 0.5f));
+    motor2_encoder.setCountsPerRev((int)(pGeom->cpr + 0.5f));
+
+    // car_type -> base cinematique. 4 (FOURWHEEL) = 4 roues motrices non holonomes, donc
+    // SKID_STEER ; 1..3 sont les declinaisons MECANUM. 5 (ACKERMAN) et 6 (SUNRISE) n'ont pas
+    // d'equivalent ici : on ne change alors PAS la base plutot que d'en inventer une.
+    int ct = (int)(pGeom->car_type + 0.5f);
+    if (ct == 4)                  kinematics.setBase(Kinematics::SKID_STEER);
+    else if (ct >= 1 && ct <= 3)  kinematics.setBase(Kinematics::MECANUM);
+}
+
 bool createEntities()
 {
 bool initROSOK=true,timeOK=true;
 #ifdef ENABLE_CONNECTOR_CONTROL
-    initROSOK=connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,NULL);
+    initROSOK=connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,*pidCallback);
     timeOK=   connectorROS.syncTime(); // synchronize time with the agent
 #endif // ENABLE_CONNECTOR_CONTROL
     setLed(HIGH);
@@ -761,6 +784,7 @@ void setup()
     if (isSyslog) syslog(LOG_INFO, "--- init Agent control (ROS/SerialFrame)\n");
     update_oled(NULL, "Init Ctrl Agent", NULL, NULL);
     connectorROS.setPID(K_P, K_I, K_D);
+    connectorROS.setGeomCallback(*geomCallback);
     connectorROS.initAgent(*controlCallback,*twistCallback,*jointCallback,*pidCallback);
     if (isSyslog) syslog(LOG_DEBUG, "... Done\n");
 #endif // ENABLE_CONNECTOR_CONTROL

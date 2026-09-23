@@ -1,0 +1,6 @@
+# Depot de transit du binaire pousse vers le RPi (scp) et des sauvegardes relues par
+# esptool avant ecriture : des artefacts, jamais du code. Le dossier est versionne pour
+# que scp ait une destination ; son contenu ne l'est pas.
+*
+!.gitignore
+!README.md

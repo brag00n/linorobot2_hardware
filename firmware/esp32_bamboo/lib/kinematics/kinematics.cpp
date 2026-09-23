@@ -22,10 +22,65 @@ Kinematics::Kinematics(base robot_base, int motor_max_rpm, float max_rpm_ratio,
     base_platform_(robot_base),
     wheels_y_distance_(wheels_y_distance),
     wheel_circumference_(PI * wheel_diameter),
-    total_wheels_(getTotalWheels(robot_base))
+    total_wheels_(getTotalWheels(robot_base)),
+    motor_max_rpm_(motor_max_rpm),
+    max_rpm_ratio_(max_rpm_ratio),
+    motor_operating_voltage_(motor_operating_voltage),
+    motor_power_max_voltage_(motor_power_max_voltage)
 {    
-    motor_power_max_voltage = constrain(motor_power_max_voltage, 0, motor_operating_voltage);
-    max_rpm_ =  ((motor_power_max_voltage / motor_operating_voltage) * motor_max_rpm) * max_rpm_ratio;
+    updateMaxRPM();
+}
+
+// La tension d'alimentation est BRIDEE a la tension nominale du moteur : le
+// rapport ne depasse donc jamais 1, et max_rpm_ ne depasse jamais
+// motor_max_rpm * ratio. Alimenter en 12 V un moteur donne pour 6 V ne double
+// pas le plafond -- c'est voulu, on ne survitesse pas le moteur.
+void Kinematics::updateMaxRPM()
+{
+    float supply = constrain(motor_power_max_voltage_, 0, motor_operating_voltage_);
+    max_rpm_ = ((supply / motor_operating_voltage_) * motor_max_rpm_) * max_rpm_ratio_;
+}
+
+void Kinematics::setWheelDiameter(float wheel_diameter)
+{
+    if (wheel_diameter <= 0) return;
+    wheel_circumference_ = PI * wheel_diameter;
+}
+
+void Kinematics::setWheelsYDistance(float wheels_y_distance)
+{
+    if (wheels_y_distance <= 0) return;
+    wheels_y_distance_ = wheels_y_distance;
+}
+
+void Kinematics::setMotorMaxRPM(int motor_max_rpm)
+{
+    if (motor_max_rpm <= 0) return;
+    motor_max_rpm_ = motor_max_rpm;
+    updateMaxRPM();
+}
+
+// Change de plate-forme ET rafraichit total_wheels_, sans quoi getVelocities
+// diviserait par un nombre de roues qui n'est plus celui de la plate-forme.
+void Kinematics::setBase(base robot_base)
+{
+    base_platform_ = robot_base;
+    total_wheels_ = getTotalWheels(robot_base);
+}
+
+float Kinematics::getWheelDiameter()
+{
+    return wheel_circumference_ / PI;
+}
+
+float Kinematics::getWheelsYDistance()
+{
+    return wheels_y_distance_;
+}
+
+Kinematics::base Kinematics::getBase()
+{
+    return base_platform_;
 }
 
 Kinematics::rpm Kinematics::calculateRPM(float linear_x, float linear_y, float angular_z)

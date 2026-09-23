@@ -47,6 +47,17 @@ class Connector {
         float D;
     } Pid_;
 
+    // Geometrie physique inscriptible A CHAUD (MAVLink PARAM_SET idx 15-18). Les unites
+    // sont celles du fil, pas celles de Kinematics : circonference et entraxe en
+    // MILLIMETRES bruts, car_type en flottant. La conversion est faite par le callback
+    // cote firmware, seul endroit qui connait Kinematics.
+    struct Geom_t: Device::Device_t {
+        float cpr;        // tics par tour d'encodeur
+        float circ_mm;    // circonference de roue (mm)
+        float apb_mm;     // demi-voie (mm) = LR_WHEELS_DISTANCE / 2
+        float car_type;   // 1..6, cf. CAR_TYPE_*
+    } Geom_;
+
     struct DeviceWifi_t: Device::Device_t {
         String ssid;
         String bssid;
@@ -69,6 +80,7 @@ class Connector {
     typedef void (* connectorTwistCallbak_t)(const Connector::Twist_t* pTwist, String pSource);
     typedef void (* connectorJointCallbak_t)(const Connector::joint_state_t* pJointState, String pSource);
     typedef void (* connectorPidCallbak_t)(const Connector::Pid_t* pPid, String pSource);
+    typedef void (* connectorGeomCallbak_t)(const Connector::Geom_t* pGeom, String pSource);
 
     Odometry::Odometry_data odom_msg;
     Battery::Battery_t battery_msg;
@@ -76,6 +88,11 @@ class Connector {
     Range::Range_t range_msg;
 
     virtual bool initAgent(const connectorTimerCallbak_t pCallback,Connector::connectorTwistCallbak_t ptwistCallback,Connector::connectorJointCallbak_t pJointCallback,Connector::connectorPidCallbak_t pPidCallback) =0;
+    // Enregistrement du callback de geometrie : volontairement NON pur et hors initAgent().
+    // Ajouter un 5e parametre a initAgent() aurait casse les 4 connecteurs existants pour
+    // une fonction que seul MAVLink implemente ; les connecteurs qui l'ignorent heritent de
+    // ce corps vide.
+    virtual void setGeomCallback(Connector::connectorGeomCallbak_t pGeomCallback) { (void)pGeomCallback; }
     virtual bool isAvailable() =0;
     virtual bool pingAgent(int timeout_ms, int attempts) =0;
     virtual bool listenAgent(long pWait_time_ms)=0;

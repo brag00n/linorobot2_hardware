@@ -55,15 +55,36 @@ class Kinematics
         rpm getRPM(float linear_x, float linear_y, float angular_z);
         float getMaxRPM();
 
+        // --- geometrie inscriptible a chaud (SRAM) ---------------------------
+        // La cinematique n'est plus figee a la compilation : l'hote peut la
+        // corriger par MAVLink (PARAM_SET WHEEL_CIRC / WHEEL_APB / CAR_TYPE)
+        // sans reflasher. Aucune reconstruction d'objet n'est necessaire, les
+        // membres sont relus a chaque appel (calculateRPM / getVelocities).
+        // Les valeurs non strictement positives sont ignorees : un parametre
+        // absurde venu du fil ne doit pas immobiliser le robot.
+        void setWheelDiameter(float wheel_diameter);
+        void setWheelsYDistance(float wheels_y_distance);
+        void setMotorMaxRPM(int motor_max_rpm);
+        void setBase(base robot_base);
+        float getWheelDiameter();
+        float getWheelsYDistance();
+        base getBase();
+
     private:
         rpm calculateRPM(float linear_x, float linear_y, float angular_z);
         int getTotalWheels(base robot_base);
+        void updateMaxRPM();
 
         float max_rpm_;
         float wheels_y_distance_;
         float pwm_res_;
         float wheel_circumference_;
         int total_wheels_;
+        // memorises pour pouvoir recalculer max_rpm_ apres un setMotorMaxRPM
+        int motor_max_rpm_;
+        float max_rpm_ratio_;
+        float motor_operating_voltage_;
+        float motor_power_max_voltage_;
 };
 
 #endif

@@ -59,6 +59,20 @@ public:
 		pin1_ = pin1;
 		pin2_ = pin2;
 	}
+	// Reglage a chaud du nombre de tics par tour (MAVLink PARAM_SET WHEEL_CPR).
+	// La sentinelle -1 = "voie inutilisee" (broches negatives au constructeur) est
+	// PRESERVEE : une voie morte ne doit pas se reveiller par un parametre du fil. Une
+	// valeur nulle ou negative est ignoree, pour qu'un parametre absurde n'immobilise pas
+	// le robot. Aucun re-attachement n'est necessaire : counts_per_rev_ n'est lu qu'au
+	// calcul du RPM, pas par attachHalfQuad().
+	void setCountsPerRev(int counts_per_rev) {
+		if (counts_per_rev_ < 0) return;   // voie inutilisee : on n'active rien
+		if (counts_per_rev <= 0) return;   // valeur absurde : on garde l'ancienne
+		counts_per_rev_ = counts_per_rev;
+	}
+	int getCountsPerRev() {
+		return counts_per_rev_;
+	}
 	float getTicks() {
 		return delta_ticks_;
 	}

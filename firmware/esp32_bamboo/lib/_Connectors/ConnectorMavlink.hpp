@@ -68,6 +68,15 @@ class ConnectorMavlink : public Connector {
     // rearme a false.
     bool takeGyroCalRequest();
 
+    // Enregistrement du callback de geometrie (idx 15-18 inscriptibles en SRAM).
+    void setGeomCallback(connectorGeomCallbak_t pGeomCallback);
+
+    // Journal de la carte remonte a l'hote en STATUSTEXT (#253), donc republie par le
+    // driver ROS dans /rosout. Emis seulement si severity <= logLevel_ : le filtrage se
+    // fait A LA SOURCE, pour ne pas saturer l'UART partage avec la telemetrie. Le seuil
+    // est le parametre LOG_LEVEL (severites MAV_SEVERITY : 0 = EMERGENCY ... 7 = DEBUG).
+    void sendLog(uint8_t severity, const char* text);
+
   private:
     // --- emission (pack MAVLink -> UART) ---
     void sendMessage();               // serialise s_tx_msg_ vers Serial
@@ -90,6 +99,7 @@ class ConnectorMavlink : public Connector {
     connectorTwistCallbak_t twistCallback_ = NULL;
     connectorJointCallbak_t jointCallback_ = NULL;
     connectorPidCallbak_t   pidCallback_   = NULL;
+    connectorGeomCallbak_t  geomCallback_  = NULL;
 
     // --- caches de metriques ---
     uint16_t battMv_   = 0;   // tension mV, rafraichie par publishBattery
@@ -98,6 +108,7 @@ class ConnectorMavlink : public Connector {
     uint32_t lastHeartbeat_ = 0; // cadence HEARTBEAT (~1 Hz)
     volatile bool gyroCalReq_ = false; // demande de recalibrage gyro en attente
     bool versionSent_ = false; // banniere d'identite deja emise (une fois au demarrage)
+    uint8_t logLevel_ = 6;     // MAV_SEVERITY_INFO : seuil de journal par defaut
 };
 
 #endif // CONNECTOR_MAVLINK_H

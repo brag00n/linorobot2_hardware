@@ -103,6 +103,9 @@ class RobotComSerial:
 
         # Historique encodeur (vitesse instantanee) + baseline de calibration
         self.enc_hist = deque(maxlen=600)   # (t, [M1..M4])
+        # Journal de la carte (STATUSTEXT MAVLink) : (t, severite, texte). Borne a 200
+        # lignes -- si personne ne draine, on perd les plus anciennes, pas la memoire.
+        self.logs = deque(maxlen=200)
         self.baseline = None                # [M1..M4] de reference (calibrate)
 
         self._stop = False
@@ -329,9 +332,28 @@ class RobotComSerial:
             self.wheel_geom_t = time.time()
         elif kind == "pid":
             self.pid[int(p["index"])] = (dict(p), time.time())
+        elif kind == "log":
+            # Journal de la carte (STATUSTEXT). On ne l'IMPRIME pas ici : le consommateur
+            # (driver ROS -> /rosout, ou HUD) le drainera. File bornee : un firmware
+            # bavard ne doit pas faire gonfler la memoire d'un hote qui ne drainerait pas.
+            self.logs.append((time.time(), int(p.get("severity", 6)), p.get("text", "")))
+            if self.tel:
+                self.tel.log_rx(self._rx_prefix + "log", severity=p.get("severity"),
+                                text=p.get("text"))
         elif kind == "heartbeat":
             # MAVLink seul : sert a la decouverte (sysid). Pas d'etat metrique.
             self.rx_sysid = p.get("sysid")
+
+    def drainLogs(self):
+        """Retire et renvoie les lignes de journal recues de la carte.
+
+        Liste de (horodatage hote, severite MAV_SEVERITY, texte). Vide la file : chaque
+        ligne n'est donc rendue qu'UNE fois, a un seul consommateur.
+        """
+        with self.lock:
+            out = list(self.logs)
+            self.logs.clear()
+        return out
 
     def _closeSer(self):
         if self.ser is not None:

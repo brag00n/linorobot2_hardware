@@ -27,12 +27,22 @@
 //           telemetrie complete ; parametres en LECTURE seule
 //           (les index 15-18 echotent sans ecrire) ; pas de
 //           persistance ; gains PID communs aux 4 moteurs.
+//    0.2.0  ecriture SRAM des parametres de geometrie (index 15-18 :
+//           WHEEL_CPR / WHEEL_CIRC / WHEEL_APB / CAR_TYPE), appliquee a
+//           chaud a Kinematics et aux encodeurs ; correction du callback
+//           PID de la voie de controle (les gains etaient inertes en
+//           MAVLink) ; journal de la carte en STATUSTEXT avec seuil de
+//           severite reglable par le parametre LOG_LEVEL (index 19,
+//           ajoute EN FIN de table : le contrat 0-18 est intact) ;
+//           amorcages alignes sur les valeurs constructeur WaveShare.
+//           Toujours aucune persistance : le driver repousse la
+//           configuration a chaque connexion.
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 1
+#define FW_VERSION_MINOR 2
 #define FW_VERSION_PATCH 0
 
 #define FW_STR_(x) #x

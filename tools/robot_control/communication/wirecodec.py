@@ -311,6 +311,15 @@ class MavlinkCodec:
             heading = math.degrees(math.atan2(m.my, m.mx)) % 360.0
             return [("mag", {"mx": m.mx, "my": m.my, "mz": m.mz,
                              "heading": heading, "ts": m.time_boot_ms})]
+        if t == "STATUSTEXT":
+            # Journal de la carte. severity = MAV_SEVERITY (0 EMERGENCY .. 7 DEBUG), donc
+            # directement transposable en niveaux ROS par le driver. Le texte arrive en
+            # bytes ou en str selon la version de pymavlink, et peut etre complete de zeros.
+            txt = m.text
+            if isinstance(txt, (bytes, bytearray)):
+                txt = txt.decode("utf-8", "replace")
+            return [("log", {"severity": int(m.severity),
+                             "text": txt.rstrip("\x00").strip()})]
         if t == "PARAM_VALUE":
             return self._on_param(m.param_id, m.param_value)
         return []

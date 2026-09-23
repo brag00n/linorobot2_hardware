@@ -37,6 +37,16 @@
 #define WSM_APB_MM   (((float)LR_WHEELS_DISTANCE) * 0.5f * 1000.0f) // demi-voie/empattement en mm
 #define WSM_CAR_TYPE (4.0f)                                         // FOURWHEEL (TB6612 differentiel)
 
+// Ces macros ne sont plus la valeur courante mais l'AMORCAGE : la geometrie vit desormais
+// en SRAM et s'ecrit a chaud par PARAM_SET (idx 15-18), sur le modele de la STM32
+// (mav_protocol.c / app_motion.c). Pas de persistance : aucun NVS dans ce microcode, et le
+// driver ROS repousse la configuration a chaque connexion -> un reboot carte revient
+// simplement a ces amorcages.
+static float s_cpr      = WSM_CPR;
+static float s_circ_mm  = WSM_CIRC_MM;
+static float s_apb_mm   = WSM_APB_MM;
+static float s_car_type = WSM_CAR_TYPE;
+
 // Adressage MAVLink (cf. ConnectorMavlink.hpp / mav_protocol.h STM32).
 #define MAV_SYS_ID_ESP32   (2)
 #define MAV_COMP_ID        (1)   // MAV_COMP_ID_AUTOPILOT1
@@ -64,6 +74,9 @@ enum {
     P_YAW_KP,  P_YAW_KI,  P_YAW_KD,
     P_WHEEL_CPR, P_WHEEL_CIRC, P_WHEEL_APB,
     P_CAR_TYPE,
+    // Ajoute EN FIN de table, apres le contrat d'index 0-18 partage avec la STM32 : un
+    // hote qui ne connait pas LOG_LEVEL lit les 19 premiers index a l'identique.
+    P_LOG_LEVEL,
     PARAM_COUNT
 };
 
@@ -75,6 +88,7 @@ static const char * const s_param_name[PARAM_COUNT] = {
     "YAW_KP",  "YAW_KI",  "YAW_KD",
     "WHEEL_CPR", "WHEEL_CIRC", "WHEEL_APB",
     "CAR_TYPE",
+    "LOG_LEVEL",
 };
 
 // --- cycle de vie ---
@@ -240,10 +254,11 @@ float ConnectorMavlink::paramGet(uint16_t idx) {
     case P_YAW_KP: return yawP_;
     case P_YAW_KI: return yawI_;
     case P_YAW_KD: return yawD_;
-    case P_WHEEL_CPR:  return WSM_CPR;
-    case P_WHEEL_CIRC: return WSM_CIRC_MM;
-    case P_WHEEL_APB:  return WSM_APB_MM;
-    case P_CAR_TYPE:   return WSM_CAR_TYPE;
+    case P_WHEEL_CPR:  return s_cpr;
+    case P_WHEEL_CIRC: return s_circ_mm;
+    case P_WHEEL_APB:  return s_apb_mm;
+    case P_CAR_TYPE:   return s_car_type;
+    case P_LOG_LEVEL:  return (float)logLevel_;
     default: return 0;
     }
 }
@@ -271,12 +286,60 @@ int ConnectorMavlink::paramSetByName(const char* name, float value) {
     case P_YAW_KP: yawP_ = value; return idx;
     case P_YAW_KI: yawI_ = value; return idx;
     case P_YAW_KD: yawD_ = value; return idx;
-    // Geometrie/CAR_TYPE : placeholder read-only (kinematics fige a la compilation).
-    // On echo la valeur reelle pour ne pas mentir au GCS.
-    case P_WHEEL_CPR: case P_WHEEL_CIRC: case P_WHEEL_APB: case P_CAR_TYPE:
+    // Geometrie/CAR_TYPE : ecriture reelle en SRAM, puis application par callback
+    // (miroir de mav_protocol.c:163-184 cote STM32). Les gardes sont deliberement
+    // strictes : une valeur nulle, negative ou hors enum est REFUSEE et l'ancienne
+    // conservee, car une geometrie absurde immobilise le robot (division par zero dans
+    // Kinematics) alors qu'un refus se voit immediatement a la relecture.
+    case P_WHEEL_CPR:
+        if (value <= 0) return -1;
+        s_cpr = value;
+        break;
+    case P_WHEEL_CIRC:
+        if (value <= 0) return -1;
+        s_circ_mm = value;
+        break;
+    case P_WHEEL_APB:
+        if (value <= 0) return -1;
+        s_apb_mm = value;
+        break;
+    case P_CAR_TYPE:
+        // 1..6 : MECANUM, MECANUM_MAX, MECANUM_MINI, FOURWHEEL, ACKERMAN, SUNRISE.
+        if (value < 1.0f || value > 6.0f) return -1;
+        s_car_type = value;
+        break;
+    case P_LOG_LEVEL:
+        // Severites MAV_SEVERITY 0..7. Ne declenche aucun callback : le seuil est local
+        // au connecteur, c'est lui qui filtre a l'emission.
+        if (value < 0.0f || value > 7.0f) return -1;
+        logLevel_ = (uint8_t)(value + 0.5f);
         return idx;
     default: return -1;
     }
+
+    if (geomCallback_ != NULL) {
+        Geom_.cpr = s_cpr; Geom_.circ_mm = s_circ_mm;
+        Geom_.apb_mm = s_apb_mm; Geom_.car_type = s_car_type;
+        geomCallback_(&Geom_, "ConnectorMavlink");
+    }
+    return idx;
+}
+
+void ConnectorMavlink::setGeomCallback(connectorGeomCallbak_t pGeomCallback) {
+    geomCallback_ = pGeomCallback;
+}
+
+// Journal carte -> hote. Un STATUSTEXT porte 50 octets de texte au plus ; on tronque
+// plutot que de fragmenter (chunk_seq), le journal de la carte n'ayant pas vocation a
+// porter de longs messages sur un UART partage avec la telemetrie.
+void ConnectorMavlink::sendLog(uint8_t severity, const char* text) {
+    if (text == NULL) return;
+    if (severity > logLevel_) return;   // filtrage A LA SOURCE
+    char buf[51] = {0};
+    strncpy(buf, text, 50);
+    mavlink_msg_statustext_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
+                                severity, buf, 0, 0);
+    sendMessage();
 }
 
 void ConnectorMavlink::sendParam(uint16_t idx) {
@@ -306,9 +369,11 @@ void ConnectorMavlink::sendCommandAck(uint16_t command, uint8_t result) {
 // On n'a PAS ajoute de parametre de version a la table PARAM : son ordre d'index
 // est un contrat de fil identique a celui de la STM32, qu'un ajout casserait.
 void ConnectorMavlink::sendVersion() {
-    mavlink_msg_statustext_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
-                                MAV_SEVERITY_INFO, FW_IDENT_STR, 0, 0);
-    sendMessage();
+    // "boot: <identite>" : c'est la ligne INFO que le driver ROS republie dans /rosout au
+    // demarrage de la carte -- la preuve, cote ROS, de quel microcode tourne reellement.
+    char banner[51];
+    snprintf(banner, sizeof(banner), "boot: %s", FW_IDENT_STR);
+    sendLog(MAV_SEVERITY_INFO, banner);
 
     // flight_custom_version : 8 octets, on y met le debut du nom de carte (pas de
     // hash git disponible ici). middleware/os laisses a zero : non pertinents.

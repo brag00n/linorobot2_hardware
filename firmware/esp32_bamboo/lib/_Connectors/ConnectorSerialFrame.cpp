@@ -6,14 +6,17 @@
 // reelle de la Waveshare n'est pas mesuree (cf. caveat calibration du plan).
 #include "config.h"
 
+// Replis alignes sur les amorcages de config/custom/bamboov310_config.h (valeurs
+// constructeur WaveShare "UGV Rover"). Ce connecteur reste read-only sur la geometrie :
+// l'ecriture a chaud n'existe que sur la voie MAVLink.
 #ifndef COUNTS_PER_REV1
-#define COUNTS_PER_REV1 2114
+#define COUNTS_PER_REV1 1650
 #endif
 #ifndef WHEEL_DIAMETER
-#define WHEEL_DIAMETER 0.8
+#define WHEEL_DIAMETER 0.08
 #endif
 #ifndef LR_WHEELS_DISTANCE
-#define LR_WHEELS_DISTANCE 1.3
+#define LR_WHEELS_DISTANCE 0.172
 #endif
 
 #define WSF_CPR      ((uint16_t)(COUNTS_PER_REV1))

@@ -31,8 +31,10 @@
 #define LED_PIN 13 //used for debugging status
 
 //uncomment the base you're building
-#define LINO_BASE DIFFERENTIAL_DRIVE       // 2WD and Tracked robot w/ 2 motors
-// #define LINO_BASE SKID_STEER            // 4WD robot
+// BambooWS = 4 roues motrices (TB6612FNG, 2 encodeurs seulement) -> SKID_STEER, sinon
+// total_wheels_ = 2 et la cinematique raisonne sur un 2 roues.
+// #define LINO_BASE DIFFERENTIAL_DRIVE    // 2WD and Tracked robot w/ 2 motors
+#define LINO_BASE SKID_STEER               // 4WD robot
 // #define LINO_BASE MECANUM               // Mecanum drive robot
 
 //uncomment the motor driver you're using
@@ -95,12 +97,18 @@ ROBOT ORIENTATION
 #define MOTOR_OPERATING_VOLTAGE 6          // motor's operating voltage (used to calculate max RPM)
 #define MOTOR_POWER_MAX_VOLTAGE 12          // max voltage of the motor's power source (used to calculate max RPM)
 #define MOTOR_POWER_MEASURED_VOLTAGE 12     // current voltage reading of the power connected to the motor (used for calibration)
-#define COUNTS_PER_REV1 2114 //12              // wheel1 encoder's no of ticks per rev
-#define COUNTS_PER_REV2 2114 //12              // wheel2 encoder's no of ticks per rev
-#define COUNTS_PER_REV3 2114 //12              // wheel3 encoder's no of ticks per rev
-#define COUNTS_PER_REV4 2114 //12              // wheel4 encoder's no of ticks per rev
-#define WHEEL_DIAMETER 0.8                // wheel's diameter in meters
-#define LR_WHEELS_DISTANCE 1.3            // distance between left and right wheels
+// AMORCAGE SEULEMENT, plus des constantes gravees : geometrie, CPR, PID et car type sont
+// inscriptibles A CHAUD en SRAM par MAVLink (PARAM_SET idx 15-18), et la verite physique
+// vit dans linorobot2/bamboo_base/config/robots/bamboo4WD_V4_WSEsp32.yaml, que le driver
+// repousse a chaque connexion. Valeurs constructeur du kit WaveShare "UGV Rover"
+// (depot waveshareteam/ugv_base_general, General_Driver/ugv_config.h, mainType 02) :
+// ONE_CIRCLE_PLUSES 1650, WHEEL_D 0.0800 m, TRACK_WIDTH 0.172 m. << NON MESURE >>
+#define COUNTS_PER_REV1 1650              // wheel1 encoder's no of ticks per rev
+#define COUNTS_PER_REV2 1650              // wheel2 encoder's no of ticks per rev
+#define COUNTS_PER_REV3 1650              // recopie de 1 : une seule voie d'encodeur a gauche
+#define COUNTS_PER_REV4 1650              // recopie de 2 : une seule voie d'encodeur a droite
+#define WHEEL_DIAMETER 0.08               // wheel's diameter in meters
+#define LR_WHEELS_DISTANCE 0.172          // distance between left and right wheels
 #define PWM_BITS 8                          // PWM Resolution of the microcontroller
 #define PWM_FREQUENCY 100000           // PWM Frequency in Hz
 
