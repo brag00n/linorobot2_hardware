@@ -116,7 +116,7 @@ ensemble** (`lib/BSP/bsp_motor.h:80-92`) :
 
 | Constante | Aujourd'hui | Cible 7,4 V | Sur le moteur |
 |---|---|---|---|
-| `MOTOR_IGNORE_PULSE` | 1600 (44 %) | **~940** (26 %) `<< À MESURER, test Y2 >>` | 5,6 V → 3,3 V |
+| `MOTOR_IGNORE_PULSE` | 1600 (44 %) | **~940** (26 %) `<< À MESURER, test T2 >>` | 5,6 V → 3,3 V |
 | `MOTOR_MAX_PULSE` | 3600 (100 %) | **2114** (59 %) | 12,6 V → **7,4 V** |
 
 Variante préférable, **compensée en tension** — `Bat_Voltage_Z10()` renvoie déjà VIN × 10, donc le
@@ -162,10 +162,10 @@ clamp vit donc dans le pilotage pan/tilt, **sans reflash**.
 série**, famille qui tourne en 6–12 V chez Yahboom. Si le header partage ce rail, brancher un SG90
 (4,8–6 V) le détruit **au premier contact**. Deux routes, dans cet ordre :
 
-1. **Mesurer** le V+ du header au multimètre, carte alimentée, moteurs à l'arrêt (test **Y1**).
+1. **Mesurer** le V+ du header au multimètre, carte alimentée, moteurs à l'arrêt (test **T1**).
    Obligatoire dans tous les cas, avant le premier branchement.
 2. **Ne pas dépendre de la réponse** : les deux SG90 sur leur **propre BEC 5 V** pris sur le pack,
-   et vers la carte **le fil de signal seul**, masse commune. C'est la route retenue même si Y1
+   et vers la carte **le fil de signal seul**, masse commune. C'est la route retenue même si T1
    donne 5 V : deux SG90 en butée, c'est ~1,4 A impulsionnel injecté dans le régulateur qui
    alimente le STM32 — exactement le couplage qu'on retire du rail moteur au §4.
 
@@ -179,29 +179,31 @@ dérivation du microcode lui-même (`src/app_motion.h:8-25`) —
 
 Les moteurs n'étant **pas** des Yahboom, leur régime nominal (275 RPM) est absent de la table du
 microcode (205 / 330 / 450 / 550) : cette absence n'invalide rien, seul le train d'engrenages entre
-dans le cpr. **À valider par comptage réel sur les 4 voies, roues surélevées** (test **Y3**).
+dans le cpr. **À valider par comptage réel sur les 4 voies, roues surélevées** (test **T3**).
 
 ---
 
 ## 7. Tests à passer **avant toute actuation**
 
-Série **Y** propre à ce robot, pour ne jamais collisionner avec la série **T** de `bamboo4WD_V4_WSEsp32`.
+Numérotation **propre à ce robot** : ces `Tn` repartent de **T1** et ne sont pas les `Tn` de
+`bamboo4WD_V4_WSEsp32` (série arrivée à T22). Un numéro d'essai ne vaut donc **que** qualifié par son
+robot : toujours dire « T2 de bambooSTM32YB », jamais « T2 » seul.
 
 | N° | Objet | Condition |
 |---|---|---|
-| **Y1** | V+ du header servo au multimètre | carte alimentée, moteurs arrêtés, **avant** tout branchement servo |
-| **Y2** | bande morte réelle : rapport cyclique minimal de démarrage, par moteur | **roues surélevées** — donne le `MOTOR_IGNORE_PULSE` du §4 |
-| **Y3** | comptage encodeur sur 10 tours manuels, 4 voies | roues surélevées, aucun couple moteur → confirme cpr 1320 |
-| **Y4** | seuils batterie : lecture `/battery` contre multimètre sur VIN | vérifie l'étalonnage de l'ADC avant de se fier à l'alarme |
-| **Y5** | matrice de direction (signes `linear.x` / `angular.z`) | roues surélevées, après Y2 |
+| **T1** | V+ du header servo au multimètre | carte alimentée, moteurs arrêtés, **avant** tout branchement servo |
+| **T2** | bande morte réelle : rapport cyclique minimal de démarrage, par moteur | **roues surélevées** — donne le `MOTOR_IGNORE_PULSE` du §4 |
+| **T3** | comptage encodeur sur 10 tours manuels, 4 voies | roues surélevées, aucun couple moteur → confirme cpr 1320 |
+| **T4** | seuils batterie : lecture `/battery` contre multimètre sur VIN | vérifie l'étalonnage de l'ADC avant de se fier à l'alarme |
+| **T5** | matrice de direction (signes `linear.x` / `angular.z`) | roues surélevées, après T2 |
 
-Aucun essai au sol avant Y2, Y3 et Y5 validés.
+Aucun essai au sol avant T2, T3 et T5 validés.
 
 ## Sécurité
 
 - **Ne jamais alimenter en 8,6–9,5 V** : arrêt latchant en 2 s, reset obligatoire (§3).
-- **Ne pas brancher un SG90 avant le test Y1** : le rail peut être en 6–12 V (§5).
-- **Roues surélevées** pour Y2, Y3 et Y5 ; la tension pack arrivant brute sur des moteurs 7,4 V,
+- **Ne pas brancher un SG90 avant le test T1** : le rail peut être en 6–12 V (§5).
+- **Roues surélevées** pour T2, T3 et T5 ; la tension pack arrivant brute sur des moteurs 7,4 V,
   ne pas actionner avant la mise à l'échelle des constantes du §4.
 - BMS du pack **enfermé et inaccessible** : la limitation d'appel de courant (rampe) et le plafond
   de rapport cyclique sont les seules protections que nous maîtrisons.
