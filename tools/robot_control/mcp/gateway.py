@@ -16,7 +16,7 @@ serialise). Quand l'app est arretee, le MCP ouvre COM4 lui-meme (RobotComSerial 
 RobotMotorDrive) et appelle le MEME handle_command.
 
 Garde-fous materiels (memoire projet) repris a l'identique : motor_drive borne
-+-50 %/2 s, motor_drive_all borne +-40 %/5 s, STOP franc x5, M2 encodeur HS.
++-50 %/2 s, motor_drive_all borne +-40 %/5 s, STOP franc x5.
 -> Roues surelevees imperativement si un pilotage moteur est declenche.
 """
 import json
@@ -370,9 +370,8 @@ def _cmd_motor_drive_all(args, link, motion, cpr):
              "  commandes : M1=%+d M2=%+d M3=%+d M4=%+d (%%)"
              % (vals[0], vals[1], vals[2], vals[3])]
     for i in range(4):
-        note = "  (encodeur HS)" if i == 1 else ""       # M2 = voie encodeur morte
-        lines.append("  M%d : delta %+d  (pic %+d)%s"
-                     % (i + 1, final[i] - base[i], peak[i] - base[i], note))
+        lines.append("  M%d : delta %+d  (pic %+d)"
+                     % (i + 1, final[i] - base[i], peak[i] - base[i]))
     return "\n".join(lines)
 
 
@@ -380,11 +379,11 @@ def _cmd_motor_drive_all(args, link, motion, cpr):
 def _cmd_cmd_vel(args, link, motion, cpr):
     """Consigne de vitesse aux conventions ROS (FUNC_MOTION 0x12) : la carte
     fait la kinematics differentielle + le PID par roue. On republie le Twist
-    @10Hz pendant `seconds`, on echantillonne les rpm (regulation => M1/M3/M4
-    doivent s'EGALISER, vs l'ecart ~86 % en PWM brut), puis STOP garanti
+    @10Hz pendant `seconds`, on echantillonne les rpm (regulation => les QUATRE
+    moteurs doivent s'EGALISER, vs l'ecart ~86 % en PWM brut), puis STOP garanti
     (cmd_vel 0,0 repete -> Motion_Stop). ROUES SURELEVEES obligatoire.
     Prerequis : car_type=4 (FOURWHEEL) sinon la trame n'est pas routee vers la
-    kinematics 4-roues. M2 (encodeur mort) : non observable -> controle visuel."""
+    kinematics 4-roues."""
     if not link.connected:
         return "Port non connecte : impossible de piloter."
     lin = max(-0.4, min(0.4, _f(args.get("linear"), 0.0)))     # securite banc : +-0.4 m/s
@@ -417,21 +416,22 @@ def _cmd_cmd_vel(args, link, motion, cpr):
     lines = ["cmd_vel : linear.x=%.3f m/s  angular.z=%.3f rad/s  pendant %gs :"
              % (lin, ang, seconds),
              "  deltas (tics) : "
-             + "  ".join("M%d=%+d%s" % (i + 1, final[i] - base[i],
-                                        " (HS)" if i == 1 else "")
+             + "  ".join("M%d=%+d" % (i + 1, final[i] - base[i])
                          for i in range(4))]
     if last_sp:
         lines.append("  regime etabli : "
-                     + "  ".join("M%d=%+.0f tr/min%s"
-                                 % (i + 1, last_sp[i] * 60.0 / c, " (HS)" if i == 1 else "")
+                     + "  ".join("M%d=%+.0f tr/min"
+                                 % (i + 1, last_sp[i] * 60.0 / c)
                                  for i in range(4)))
-        ok = [abs(last_sp[i]) for i in (0, 2, 3)]              # M1,M3,M4 (M2 encodeur mort)
+        # Les 4 voies encodeur sont saines depuis le remplacement de la carte
+        # (2026-09-25) : l'ecart porte donc sur les 4 moteurs. Quand M2 etait
+        # exclu du calcul, un desequilibre sur cette roue passait inapercu.
+        ok = [abs(last_sp[i]) for i in (0, 1, 2, 3)]
         if max(ok) > 0:
             spread = (max(ok) - min(ok)) / max(ok) * 100.0
-            lines.append("  ecart M1/M3/M4 : %.1f %%  (PWM brut : ~86 %%) "
+            lines.append("  ecart M1/M2/M3/M4 : %.1f %%  (PWM brut : ~86 %%) "
                          "=> %s" % (spread,
                                     "REGULE" if spread < 20 else "encore disperse"))
-    lines.append("(M2 esclave M4 : verifier visuellement la rotation synchrone)")
     return "\n".join(lines)
 
 

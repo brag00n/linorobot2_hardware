@@ -15,9 +15,11 @@ temps (fwd et turn simultanes -> arc) ; les opposes s'annulent (fwd = haut - bas
 turn = gauche - droite).
 
 Prerequis carte : type chassis CAR_FOURWHEEL (set_car_type 4) pour router sur la
-kinematics 4 roues, et geometrie roue reglee (set_wheel_geom). M2 (encodeur HS)
-est asservi en recopie sur sa roue de meme ligne (M4, recopie inversee) cote
-firmware (sentinelle PID).
+kinematics 4 roues, et geometrie roue reglee (set_wheel_geom). Les QUATRE voies
+encodeur sont saines depuis le remplacement de la carte (2026-09-25) : aucune
+sentinelle d'esclavage PID n'est posee, chaque moteur est asservi pour lui-meme.
+L'esclavage d'un moteur sur son voisin reste une CAPACITE du firmware
+(set_motor_pid disable=true), a n'utiliser que si une voie tombe.
 """
 
 # Plafonds de securite (doivent rester <= aux bornes de sendCmdVel : 1 m/s, 2 rad/s).

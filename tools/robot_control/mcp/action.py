@@ -395,10 +395,10 @@ TOOLS = [
      "description": "Consigne de vitesse ROS en BOUCLE FERMEE (FUNC_MOTION 0x12) : la "
                     "carte fait la kinematics differentielle + le PID par roue. Republie "
                     "le Twist @10Hz pendant `seconds`, echantillonne les rpm (la "
-                    "regulation EGALISE M1/M3/M4, vs ~86 % d'ecart en PWM brut) et coupe "
+                    "regulation EGALISE LES 4 MOTEURS, vs ~86 % d'ecart en PWM brut) et coupe "
                     "franc a la fin (cmd_vel 0,0 -> Motion_Stop). Prerequis : car_type=4 "
-                    "(FOURWHEEL). ROUES SURELEVEES obligatoire. M2 (encodeur mort) : "
-                    "esclave M4 (meme ligne, recopie inversee), a verifier visuellement.",
+                    "(FOURWHEEL). ROUES SURELEVEES obligatoire. Les 4 voies encodeur "
+                    "sont saines : l'ecart est mesure sur les 4 moteurs.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "linear": {"type": "number",

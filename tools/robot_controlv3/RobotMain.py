@@ -293,19 +293,21 @@ def _draw_stm_card(frame, x, y, present, port_name, snap, pt, motion_on, smooth,
         _draw_rpm_bars(frame, x + 10, yc + 112, snap.get("rpm"))
 
 
-def _draw_rpm_bars(frame, x, y, rpm, hs_m2=True):
+def _draw_rpm_bars(frame, x, y, rpm, hs_m2=False):
     """4 barres BIPOLAIRES de vitesse de rotation (tours/MINUTE) : 0 au CENTRE,
     remplissage a DROITE si rpm>0 (avant, vert) / a GAUCHE si rpm<0 (arriere, orange).
     Echelle commune normalisee sur max(|rpm|) des moteurs VALIDES avec plancher.
-    `hs_m2` : M2 = encodeur HS (SPECIFIQUE au robot STM32 YahBoom,
-    cf. bamboo-v4-hardware-faults) -> barre PLEINE grise + « HS ». La carte ESP32
-    WaveShare a des moteurs differents (encodeurs A/B valides) -> hs_m2=False."""
+    `hs_m2` : interrupteur PAR ROBOT, a lever si la voie encodeur de M2 est morte
+    -> barre PLEINE grise + « HS », et M2 exclu de l'echelle. DEFAUT False : sur le
+    robot STM32 YahBoom la carte a ete REMPLACEE (2026-09-25) et les 4 voies sont
+    saines (cf. bamboo-v4-hardware-faults) ; les cartes ESP32 WaveShare et Teensy
+    n'ont jamais eu ce defaut."""
     _put(frame, x, y, "rpm", _C_LABEL, 0.42, 1)
     bx, bw = x + 24, 210
     cxb = bx + bw // 2
     half = bw // 2
-    # echelle commune : max |rpm| des moteurs valides, plancher 30 rpm. Sur STM32, M2
-    # (indice 1) est exclu de l'echelle (encodeur mort) ; sinon les 4 comptent.
+    # echelle commune : max |rpm| des moteurs valides, plancher 30 rpm. Les 4
+    # moteurs comptent ; M2 (indice 1) n'en sort que si hs_m2 est leve.
     valid_idx = (0, 2, 3) if hs_m2 else (0, 1, 2, 3)
     if rpm is not None:
         live = [abs(rpm[i]) for i in valid_idx if i < len(rpm) and rpm[i] is not None]
@@ -318,7 +320,7 @@ def _draw_rpm_bars(frame, x, y, rpm, hs_m2=True):
         _put(frame, x, ry, "M%d" % (i + 1), _C_LABEL, 0.42, 1)
         cv2.rectangle(frame, (bx, top), (bx + bw, bot), (60, 60, 60), 1)   # rail
         cv2.line(frame, (cxb, top), (cxb, bot), (90, 90, 90), 1)           # repere 0
-        if hs_m2 and i == 1:                         # M2 STM32 : encodeur mort -> HS
+        if hs_m2 and i == 1:                         # voie M2 declaree morte -> HS
             cv2.rectangle(frame, (bx, top), (bx + bw, bot), (90, 90, 90), -1)
             _put(frame, bx + bw + 8, ry, "HS", _C_OFF, 0.42, 1)
             continue
@@ -388,8 +390,9 @@ def _draw_wsesp32_card(frame, x, y, port_name, es, mcfg=None):
         _row(frame, x, yc + 57, [
             (10, "    yaw", _C_LABEL), (95, _ang(yw), _C_IMU)])
     if _hmi(mcfg, "esp32_rpm"):
-        # hs_m2=False : les moteurs ESP32 (encodeurs A/B) sont tous valides,
-        # contrairement au STM32 (M2 encodeur mort).
+        # hs_m2=False : les moteurs ESP32 (encodeurs A/B) sont tous valides.
+        # C'est le DEFAUT partout depuis le remplacement de la carte STM32
+        # (2026-09-25) : plus aucune voie encodeur morte sur le parc.
         _draw_rpm_bars(frame, x + 10, yc + 74, es.rpm if present else None, hs_m2=False)
 
 

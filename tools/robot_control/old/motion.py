@@ -5,8 +5,10 @@ envoyes via FUNC_MOTOR. La table de signes marche-avant [+1,-1,-1,+1] provient
 de t_motor_drive_all (ros_mcp_server.py) : c'est le vecteur "avancer" du chassis.
 
 /!\ A VERIFIER ROUES SURELEVEES puis ajuster les signes si un moteur tourne a
-l'envers. Notes materiel connues : M3 sans marche arriere, M2 encodeur HS
-(sans effet ici : teleop en PWM boucle ouverte, pas d'odometrie requise).
+l'envers. Notes materiel HISTORIQUES, relevees sur l'ANCIENNE carte et plus
+valides depuis son remplacement (2026-09-25) : M3 sans marche arriere, M2
+encodeur HS. Elles etaient de toute facon sans effet ici (teleop en PWM boucle
+ouverte, pas d'odometrie requise). Module conserve pour memoire (code mort).
 """
 
 # Vecteur marche avant : signe applique a chaque moteur pour "avancer".
