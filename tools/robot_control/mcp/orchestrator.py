@@ -66,6 +66,7 @@ SERVICES = {
     "bamboo_video": "groupe video : acquisition + mux + streaming externe :8080 (autonome)",
     "bamboo_videotracking": "groupe tracking : Tracking/FaceRecog/FaceTrain/ServoCam, s'enregistre sur bamboo_video",
     "bamboo_control": "groupe manette : joy_linux_node + bamboo_teleop (paquet a creer, lot V5)",
+    "bringup.stm32": "bringup COMPLET en un conteneur (banc) : EXCLUSIF avec bamboo_video/bamboo_videotracking/driver.stm32",
     "robotdesc": "robot_state_publisher (description URDF)",
     "slam.real": "cartographie SLAM (slam_toolbox)",
     "navigation.real": "navigation Nav2 sur carte existante",
