@@ -199,6 +199,46 @@ robot : toujours dire « T2 de bambooSTM32YB », jamais « T2 » seul.
 
 Aucun essai au sol avant T2, T3 et T5 validés.
 
+## 8. Cette carte sous ROS 2
+
+La couche ROS 2 de ce robot est décrite ailleurs -- fichier canonique, abstraction servo par topic,
+chaîne vidéo, bringup : voir
+[`linorobot2/docs/bamboo4WD_V4_YBStm32.md`](../../linorobot2/docs/bamboo4WD_V4_YBStm32.md). Ne sont
+repris ici que les deux points qui appartiennent à **la carte**, pas au logiciel.
+
+### Le port série a un propriétaire UNIQUE
+
+Le CH340 (`1a86:7523` @115200) n'admet **qu'un seul** ouvreur. Trois outils se le disputent, et aucun
+ne cède :
+
+| Outil | Quand il ouvre le port |
+|---|---|
+| `driver.stm32` (ROS 2, sysid 1) | tant que le service tourne |
+| `robot_controlv3` (`tools/`) | tant que l'application tourne |
+| MCP `robot-action` | l'application est sa passerelle -- **même** port |
+
+→ **Arrêter les deux autres avant de démarrer le troisième.** C'est la première chose à vérifier
+quand le driver « ne voit pas la carte » : le symptôme n'est pas une panne matérielle.
+
+### Essais T6+ : ce qui se joue côté ROS
+
+Les essais du §7 valident **la carte**. Ceux-ci valident **la chaîne**, et ils gardent la numérotation
+propre à ce robot (voir l'avertissement du §7).
+
+| N° | Objet | Condition |
+|---|---|---|
+| **T6** | course pan/tilt à vide, butées **8°–172°** vérifiées à l'œil et au journal | après **T1** ; caméra démontée ou débridée, SG90 sur **BEC 5 V dédié** |
+| **T7** | tracking en boucle fermée, visage devant la caméra | après T6 |
+| **T8** | banc de mesure reproductible (même séquence, C++ contre Python) | hors robot |
+| **T9** | modes à la manette, un par un | après T7 |
+| **T10** | groupe vidéo seul, flux brut à `:8080` | ✅ **validé le 2026-09-25** : 30 fps de bout en bout |
+| **T11** | groupe de tracking : composition, mux, zero-copy | en cours |
+
+⚠️ **Le passage à T6 n'est pas une formalité** : c'est le premier essai où un servo est **branché**.
+T1 en est le prérequis absolu, et le BEC dédié du §5 est retenu **même si T1 donne 5 V**.
+
+---
+
 ## Sécurité
 
 - **Ne jamais alimenter en 8,6–9,5 V** : arrêt latchant en 2 s, reset obligatoire (§3).
@@ -208,9 +248,12 @@ Aucun essai au sol avant T2, T3 et T5 validés.
 - BMS du pack **enfermé et inaccessible** : la limitation d'appel de courant (rampe) et le plafond
   de rapport cyclique sont les seules protections que nous maîtrisons.
 - Masse commune obligatoire entre le BEC servo, la carte et le pack.
+- **Un seul propriétaire du port série** (§8) : deux ouvreurs simultanés ne donnent pas une
+  erreur claire, mais des trames tronquées des deux côtés.
 
 ## Voir aussi
 
 - [`../firmware/stm32_bamboo/`](../firmware/stm32_bamboo/) — microcode de cette carte.
 - [`../tools/robot_control/robots/bamboo4WD_V4_YBStm32.json`](../tools/robot_control/robots/bamboo4WD_V4_YBStm32.json) — profil outillage (port, VID:PID, cpr, protocole).
+- [`../../linorobot2/docs/bamboo4WD_V4_YBStm32.md`](../../linorobot2/docs/bamboo4WD_V4_YBStm32.md) — la couche ROS 2 de ce robot (canonique, servos par topic, vidéo, bringup).
 - [`hardware_waveshare_ups_module_3s.md`](hardware_waveshare_ups_module_3s.md) — alimentation de l'**autre** robot (`bamboo4WD_V4_WSEsp32`), architecture différente : ne pas confondre.
