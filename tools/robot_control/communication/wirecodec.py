@@ -346,13 +346,18 @@ class MavlinkCodec:
             idx = int(name[3])
             key = name[5:]                      # KP / KI / KD
             acc = self._pid_acc.setdefault(idx, {})
+            if key == "KP":
+                acc.clear()                     # cf. _flush_pid : une salve commence par KP
             acc[key] = value
             return self._flush_pid(idx, acc)
         if name in ("YAW_KP", "YAW_KI", "YAW_KD"):
             acc = self._pid_acc.setdefault(5, {})
+            if name == "YAW_KP":
+                acc.clear()                     # idem : la salve yaw commence par KP
             acc[name[4:]] = value               # KP / KI / KD apres "YAW_"
             return self._flush_pid(5, acc)
         if name == "WHEEL_CPR":
+            self._geom_acc = {}                 # WHEEL_CPR ouvre la salve geometrie
             self._geom_acc["cpr"] = value
             return self._flush_geom()
         if name == "WHEEL_CIRC":
@@ -365,6 +370,11 @@ class MavlinkCodec:
             return [("car_type", {"value": int(round(value))})]
         return []
 
+    # POURQUOI les accumulateurs sont REMIS A ZERO sur la premiere cle d'une salve
+    # (mesure T12b du 2026-09-26) : un flush n'a lieu que sur un triple COMPLET, donc
+    # une salve dont la 3e trame est perdue laissait {KP, KI} en place -- et la salve
+    # suivante, sur un seul KD frais, rendait un dict de millesimes MELANGES qui
+    # semblait valide. Silencieux, donc pire que l'absence de reponse.
     def _flush_pid(self, idx, acc):
         if all(k in acc for k in ("KP", "KI", "KD")):
             ev = ("pid", {"index": idx, "kp": acc["KP"], "ki": acc["KI"], "kd": acc["KD"]})
@@ -492,16 +502,18 @@ class MavlinkCodec:
         return self._param_req(_IDX["CAR_TYPE"])
 
     def request_wheel_geom(self):
-        return (self._param_req(_IDX["WHEEL_CPR"])
-                + self._param_req(_IDX["WHEEL_CIRC"])
-                + self._param_req(_IDX["WHEEL_APB"]))
+        # LISTE, pas une concatenation : le transport les espace (cf. _requestReport).
+        return [self._param_req(_IDX["WHEEL_CPR"]),
+                self._param_req(_IDX["WHEEL_CIRC"]),
+                self._param_req(_IDX["WHEEL_APB"])]
 
     def request_pid(self, index):
         if index == 5:
             base = _IDX["YAW_KP"]
         else:
             base = (int(index) - 1) * 3         # MOTn_KP a l'index (n-1)*3
-        return self._param_req(base) + self._param_req(base + 1) + self._param_req(base + 2)
+        # LISTE, pas une concatenation : le transport les espace (cf. _requestReport).
+        return [self._param_req(base), self._param_req(base + 1), self._param_req(base + 2)]
 
     def enter_bootloader(self):
         # MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN param1=3 : saut bootloader (STM32).

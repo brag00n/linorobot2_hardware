@@ -499,14 +499,30 @@ class RobotComSerial:
         return [(pts[-1][1][i] - pts[0][1][i]) / dt for i in range(4)]
 
     # --- requete/reponse (lecture d'un rapport apres emission de la requete) ---
-    def _requestReport(self, req_frame, read, timeout=1.5):
+    def _requestReport(self, req_frame, read, timeout=1.5, gap_s=0.03):
         """Ecrit la (les) trame(s) de requete puis attend une valeur fraiche via read().
 
         read() renvoie la valeur decodee si un rapport PLUS RECENT que l'appel est
         arrive, sinon None. Retourne la valeur ou None sur timeout / port ferme.
+
+        req_frame accepte une LISTE de trames : elles sont alors ESPACEES de gap_s au
+        lieu d'etre concatenees en une seule ecriture. Motif MESURE (T12b de
+        bambooSTM32YB, 2026-09-26) : la STM32 n'a qu'un seul slot de reception
+        (mav_protocol.c, s_rx_flag -- une trame complete est JETEE si la precedente
+        n'est pas consommee) et l'EMISSION de la reponse PARAM_VALUE (~37 octets, soit
+        ~3,2 ms a 115200) bloque le routeur, qui ne scrute que toutes les ~1 ms. La 3e
+        trame d'une salve arrive donc pendant cette emission, trouve le drapeau encore
+        leve, et disparait SANS ERREUR DE CRC. Symptome : getPid(2) et getPid(4)
+        recevaient KP et KI, jamais KD, avec bad=0 sur 711 trames decodees. Demandes
+        une a une, les memes index repondent 3 fois sur 3. gap_s = 30 ms couvre les
+        3,2 ms d'emission avec dix fois la marge, pour 60 ms de plus par lecture.
         """
-        if not self._write(req_frame):
-            return None
+        frames = req_frame if isinstance(req_frame, (list, tuple)) else [req_frame]
+        for i, trame in enumerate(frames):
+            if not self._write(trame):
+                return None
+            if i + 1 < len(frames):
+                time.sleep(gap_s)
         t0 = time.time()
         while time.time() - t0 < timeout:
             r = read()
