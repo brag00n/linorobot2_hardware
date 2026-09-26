@@ -65,7 +65,7 @@ SERVICES = {
     "driver.stm32": "driver STM32 Yahboom v3 (pont MAVLink sysid 1) LECTURE SEULE (enable_cmd_vel=false)",
     "bamboo_video": "groupe video : acquisition + mux + streaming externe :8080 (autonome)",
     "bamboo_videotracking": "groupe tracking : Tracking/FaceRecog/FaceTrain/ServoCam, s'enregistre sur bamboo_video",
-    "bamboo_control": "groupe manette : joy_linux_node + bamboo_teleop (paquet a creer, lot V5)",
+    "bamboo_control": "groupe manette : joy_linux_node + bamboo_teleop -- modes du tracking et pas relatifs des axes servo, AUCUN moteur de traction",
     "bringup.stm32": "bringup COMPLET en un conteneur (banc) : EXCLUSIF avec bamboo_video/bamboo_videotracking/driver.stm32",
     "robotdesc": "robot_state_publisher (description URDF)",
     "slam.real": "cartographie SLAM (slam_toolbox)",
