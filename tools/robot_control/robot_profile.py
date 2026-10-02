@@ -39,10 +39,25 @@ _PERSIST_LOCK = threading.Lock()
 
 
 # Source unique de verite PHYSIQUE : elle vit dans le depot ROS frere, clone a cote de
-# celui-ci (bamboo_base/config/robots/<robot>.yaml). Les profils JSON ci-dessous ne
-# portent que des faits d'HOTE (port COM, baud, VID:PID) ; la geometrie vient de la.
-CANONICAL_DIR = os.path.normpath(os.path.join(
-    _HERE, "..", "..", "..", "linorobot2", "bamboo_base", "config", "robots"))
+# celui-ci. Les profils JSON ci-dessous ne portent que des faits d'HOTE (port COM, baud,
+# VID:PID) ; la geometrie vient de la.
+# DEUX emplacements, dans l'ORDRE de bamboo_base/bamboo_base/robot_config.py
+# (robotConfigCandidates) : d'abord le paquet de base du robot, ou les fichiers ont ete
+# deplaces (bambooSTM32YB a l'etape E2, BambooWS au lot BASCULE du 2026-10-02), puis
+# l'ancien emplacement commun. Ne lire QUE l'ancien, comme avant, faisait retomber l'outil
+# EN SILENCE sur ses profils JSON des qu'un fichier avait demenage -- le cas de bambooSTM32YB
+# depuis E2, sans que rien ne le signale.
+_ROS_REPO = os.path.normpath(os.path.join(_HERE, "..", "..", "..", "linorobot2"))
+CANONICAL_DIR = os.path.join(_ROS_REPO, "bamboo_base", "config", "robots")
+
+
+def canonical_path(robot_name):
+    """Chemin du YAML canonique du robot, ou None si aucun emplacement ne le porte."""
+    for path in (os.path.join(_ROS_REPO, robot_name + "_base", "config", robot_name + ".yaml"),
+                 os.path.join(CANONICAL_DIR, robot_name + ".yaml")):
+        if os.path.isfile(path):
+            return path
+    return None
 
 # Cles physiques lues dans le YAML canonique (toutes scalaires, une par ligne).
 _GEOM_KEYS = ("car_type", "counts_per_rev", "wheel_diameter_m", "wheel_separation_m",
@@ -58,7 +73,9 @@ def _read_canonical(robot_name):
     fichier est le notre et n'a qu'un niveau d'imbrication. Toute defaillance (depot frere
     absent, fichier illisible) est silencieuse : l'appelant retombe sur le profil JSON.
     """
-    path = os.path.join(CANONICAL_DIR, f"{robot_name}.yaml")
+    path = canonical_path(robot_name)
+    if path is None:
+        return {}
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
