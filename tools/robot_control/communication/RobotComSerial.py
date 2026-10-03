@@ -71,6 +71,8 @@ class RobotComSerial:
         self.vx = self.vy = self.vz = None
         self.yaw = None                # deg
         self.gyro = None               # (gx, gy, gz) rad/s, MAVLink ATTITUDE seulement
+        self.accel = None              # (ax, ay, az) m/s2, MAVLink SCALED_IMU seulement
+        self.accel_t = 0.0             # time.time() du dernier SCALED_IMU
         self.roll = self.pitch = None  # deg
         self.encoders = None           # [M1..M4]
         # Vitesses de rotation telles que la boucle PID EMBARQUEE les voit, en RPM
@@ -323,6 +325,9 @@ class RobotComSerial:
             if self.tel:
                 self.tel.log_rx(self._rx_prefix + "imu", roll=self.roll,
                                 pitch=self.pitch, yaw=self.yaw)
+        elif kind == "accel":
+            self.accel = tuple(float(v) for v in p["accel"])
+            self.accel_t = time.time()
         elif kind == "mag":
             self.mag = (p["mx"], p["my"], p["mz"])
             self.heading = p["heading"]
@@ -406,6 +411,11 @@ class RobotComSerial:
                 "gx": self.gyro[0] if self.gyro else None,
                 "gy": self.gyro[1] if self.gyro else None,
                 "gz": self.gyro[2] if self.gyro else None,
+                # Accelerometre (None tant qu'aucun SCALED_IMU n'est venu : microcode ancien).
+                "ax": self.accel[0] if self.accel else None,
+                "ay": self.accel[1] if self.accel else None,
+                "az": self.accel[2] if self.accel else None,
+                "accel_age": (now - self.accel_t) if self.accel_t else None,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
                 "motor_rpm": list(self.motor_rpm) if self.motor_rpm else None,

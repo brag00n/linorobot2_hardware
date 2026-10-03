@@ -46,12 +46,14 @@
 //    0.4.0  BAMBOO_HMI_TEXT (42007) : texte de l'hote sur la ligne
 //           "Ready" de l'OLED (mode du robot : CONDUITE, CALIB 3/12...),
 //           retour a "Ready" seul apres 5 s sans message.
+//    0.5.0  SCALED_IMU (#26) emis avec ATTITUDE : l'accelerometre (mG) et
+//           le gyro (mrad/s) parviennent enfin a l'hote (/imu/data).
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 4
+#define FW_VERSION_MINOR 5
 #define FW_VERSION_PATCH 0
 
 #define FW_STR_(x) #x

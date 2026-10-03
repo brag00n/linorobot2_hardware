@@ -19,6 +19,7 @@ Evenements normalises (kind, payload) consommes par RobotComSerial._applyEvent :
   ("speed",   {vx,vy,vz,battery,ts})   vx/vy en mm/s, vz en rad/s, battery en V|None
   ("battery", {battery})               V (MAVLink : SYS_STATUS separe de la vitesse)
   ("imu",     {roll,pitch,yaw,ts[,gyro]}) degres ; gyro = (gx,gy,gz) rad/s, MAVLink seul
+  ("accel",   {accel,ts})              (ax,ay,az) m/s2, SCALED_IMU - ESP32 >= 0.5.0
   ("imu_raw", {accel,gyro,ts})         accel/gyro bruts GrovePi - yahboom uniquement (le codec MAVLink ne l'emet plus)
   ("ultra",   {id,mm,ts})              telemetre ultrason id 0..3, mm|None - GrovePi
   ("ir",      {id,mm,ts})              telemetre IR id 4, mm|None - GrovePi
@@ -303,9 +304,13 @@ class MavlinkCodec:
                              "pitch": math.degrees(m.pitch),
                              "yaw": math.degrees(m.yaw), "ts": m.time_boot_ms,
                              "gyro": (m.rollspeed, m.pitchspeed, m.yawspeed)})]
-        # SCALED_IMU (#26, accel/gyro bruts) : plus emis par le GrovePi (gyro non
-        # calibre -> bruite, jamais consomme). Le firmware n'envoie que ATTITUDE ;
-        # on n'a donc plus de branche imu_raw ici. Un SCALED_IMU inattendu est ignore.
+        # SCALED_IMU (#26) : emis par l'ESP32 depuis le microcode 0.5.0 pour porter
+        # l'ACCELEROMETRE (mG) -- ATTITUDE n'a que les angles et le gyro. Converti en m/s2,
+        # l'unite de sensor_msgs/Imu. (Le GrovePi ne l'emet plus.)
+        if t == "SCALED_IMU":
+            k = 9.80665 / 1000.0
+            return [("accel", {"accel": (m.xacc * k, m.yacc * k, m.zacc * k),
+                               "ts": m.time_boot_ms})]
         if t == "DISTANCE_SENSOR":
             # Carte capteurs GrovePi : id 0..3 = HC-SR04 (ultrason), id 4 = Sharp IR.
             # current_distance en cm ; 0 = pas de mesure (DIST_NONE cote firmware).

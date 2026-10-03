@@ -177,6 +177,24 @@ void ConnectorMavlink::publishImu(IMUInterface::Imu_t m) {
                               (uint32_t)millis(), roll, pitch, yaw,
                               m.angular_velocity.x, m.angular_velocity.y, m.angular_velocity.z);
     sendMessage();
+    // SCALED_IMU (#26) : l'ACCELEROMETRE, que l'hote n'avait pas (ATTITUDE ne porte que les
+    // angles et le gyro). Unites MAVLink : mG pour l'acceleration (m/s2 / 9,80665 * 1000),
+    // mrad/s pour le gyro (calibre, zone morte appliquee comme dans ATTITUDE). Magneto a 0 :
+    // il part a part dans BAMBOO_MAG, en uT.
+    auto mg = [](float a) -> int16_t {
+        const long v = lroundf(a / 9.80665f * 1000.0f);
+        return (int16_t)(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+    };
+    auto mrad = [](float w) -> int16_t {
+        const long v = lroundf(w * 1000.0f);
+        return (int16_t)(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+    };
+    mavlink_msg_scaled_imu_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg, (uint32_t)millis(),
+                                mg(m.linear_acceleration.x), mg(m.linear_acceleration.y),
+                                mg(m.linear_acceleration.z),
+                                mrad(m.angular_velocity.x), mrad(m.angular_velocity.y),
+                                mrad(m.angular_velocity.z), 0, 0, 0, 0);
+    sendMessage();
 }
 
 void ConnectorMavlink::publishBattery(Battery::Battery_t b) {
