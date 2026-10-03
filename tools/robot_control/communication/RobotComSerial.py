@@ -70,6 +70,7 @@ class RobotComSerial:
         self.battery = None            # V
         self.vx = self.vy = self.vz = None
         self.yaw = None                # deg
+        self.gyro = None               # (gx, gy, gz) rad/s, MAVLink ATTITUDE seulement
         self.roll = self.pitch = None  # deg
         self.encoders = None           # [M1..M4]
         # Vitesses de rotation telles que la boucle PID EMBARQUEE les voit, en RPM
@@ -313,6 +314,10 @@ class RobotComSerial:
             self.roll = p["roll"]
             self.pitch = p["pitch"]
             self.yaw = p["yaw"]
+            # Absent du protocole Yahboom : on garde alors None, jamais un zero qui se
+            # ferait passer pour une mesure "robot immobile".
+            if p.get("gyro") is not None:
+                self.gyro = tuple(float(v) for v in p["gyro"])
             self.ts_imu = p.get("ts")
             self.imu_t = time.time()
             if self.tel:
@@ -396,6 +401,11 @@ class RobotComSerial:
             return {
                 "battery": self.battery, "yaw": self.yaw,
                 "roll": self.roll, "pitch": self.pitch,
+                # Vitesses gyro en rad/s (None si le protocole ne les porte pas). Meme
+                # trame que l'attitude, donc meme fraicheur : imu_age.
+                "gx": self.gyro[0] if self.gyro else None,
+                "gy": self.gyro[1] if self.gyro else None,
+                "gz": self.gyro[2] if self.gyro else None,
                 "vx": self.vx, "vy": self.vy, "vz": self.vz,
                 "encoders": list(self.encoders) if self.encoders else None,
                 "motor_rpm": list(self.motor_rpm) if self.motor_rpm else None,
@@ -614,6 +624,17 @@ class RobotComSerial:
         if err is not None:
             return False, err
         return self._write(frame), None
+
+    def recalibrateGyro(self):
+        """Remesure du biais gyro par la carte, robot IMMOBILE. Retourne (ok, err).
+
+        Refus NOMME hors MAVLink, comme setBoardLogLevel : le protocole Yahboom n'a pas
+        cette commande, et un envoi muet laisserait croire a une recalibration.
+        """
+        builder = getattr(self._codec, "recalibrate_gyro", None)
+        if builder is None:
+            return False, "recalibration gyro non portee par ce protocole (MAVLink requis)."
+        return self._write(builder()), None
 
     def setYawPid(self, kp, ki, kd, save=False):
         """PID de cap/yaw (persiste en flash si save)."""

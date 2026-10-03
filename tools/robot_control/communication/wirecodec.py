@@ -18,7 +18,7 @@ remplacement) : cf. directive projet. Chaque codec expose une interface uniforme
 Evenements normalises (kind, payload) consommes par RobotComSerial._applyEvent :
   ("speed",   {vx,vy,vz,battery,ts})   vx/vy en mm/s, vz en rad/s, battery en V|None
   ("battery", {battery})               V (MAVLink : SYS_STATUS separe de la vitesse)
-  ("imu",     {roll,pitch,yaw,ts})     degres
+  ("imu",     {roll,pitch,yaw,ts[,gyro]}) degres ; gyro = (gx,gy,gz) rad/s, MAVLink seul
   ("imu_raw", {accel,gyro,ts})         accel/gyro bruts GrovePi - yahboom uniquement (le codec MAVLink ne l'emet plus)
   ("ultra",   {id,mm,ts})              telemetre ultrason id 0..3, mm|None - GrovePi
   ("ir",      {id,mm,ts})              telemetre IR id 4, mm|None - GrovePi
@@ -294,9 +294,15 @@ class MavlinkCodec:
         if t == "HEARTBEAT":
             return [("heartbeat", {"sysid": m.get_srcSystem()})]
         if t == "ATTITUDE":
+            # rollspeed/pitchspeed/yawspeed : vitesses gyro CALIBREES de la carte (biais de
+            # boot soustrait, zone morte +-0,01 rad/s cote ESP32), en rad/s. Gardees EN
+            # RAD/S, contrairement aux angles : c'est l'unite de sensor_msgs/Imu, et la
+            # compensation de rotation (bamboo_base/motion_compensation) les compare a une
+            # consigne Twist en rad/s. Jetees jusqu'ici, d'ou /imu sans angular_velocity.
             return [("imu", {"roll": math.degrees(m.roll),
                              "pitch": math.degrees(m.pitch),
-                             "yaw": math.degrees(m.yaw), "ts": m.time_boot_ms})]
+                             "yaw": math.degrees(m.yaw), "ts": m.time_boot_ms,
+                             "gyro": (m.rollspeed, m.pitchspeed, m.yawspeed)})]
         # SCALED_IMU (#26, accel/gyro bruts) : plus emis par le GrovePi (gyro non
         # calibre -> bruite, jamais consomme). Le firmware n'envoie que ATTITUDE ;
         # on n'a donc plus de branche imu_raw ici. Un SCALED_IMU inattendu est ignore.
@@ -458,6 +464,15 @@ class MavlinkCodec:
         if save:
             out += self._storage()
         return out, None
+
+    def recalibrate_gyro(self):
+        """MAV_CMD_PREFLIGHT_CALIBRATION param1=1 : remesure du biais gyro AU REPOS.
+
+        L'ESP32 leve un drapeau consomme par sa boucle avant readIMU (~2 s de moyenne) ;
+        une carte qui ne le gere pas repond UNSUPPORTED, sans effet. Le robot doit etre
+        IMMOBILE : un biais mesure en mouvement fausserait toute la vitesse de lacet.
+        """
+        return self._cmd(self._b.MAV_CMD_PREFLIGHT_CALIBRATION, p1=1.0)
 
     def set_log_level(self, level):
         """Seuil de journal de la carte (PARAM LOG_LEVEL, idx 19). Retourne (bytes, err).
