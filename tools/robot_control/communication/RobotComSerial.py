@@ -625,6 +625,17 @@ class RobotComSerial:
             return False, err
         return self._write(frame), None
 
+    def sendHmiText(self, text):
+        """Texte de l'ecran de la carte (BAMBOO_HMI_TEXT). Retourne (ok, err).
+
+        A REPETER (~1 Hz) : la carte revient a son affichage par defaut sans message
+        recent, pour ne jamais montrer un mode perime. Refus nomme hors MAVLink.
+        """
+        builder = getattr(self._codec, "hmi_text", None)
+        if builder is None:
+            return False, "texte d'ecran non porte par ce protocole (MAVLink requis)."
+        return self._write(builder(text)), None
+
     def recalibrateGyro(self):
         """Remesure du biais gyro par la carte, robot IMMOBILE. Retourne (ok, err).
 

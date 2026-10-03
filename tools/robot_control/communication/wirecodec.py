@@ -465,6 +465,15 @@ class MavlinkCodec:
             out += self._storage()
         return out, None
 
+    def hmi_text(self, text):
+        """BAMBOO_HMI_TEXT (42007) : texte court pour l'ecran de la carte (mode du robot).
+
+        ASCII, 15 caracteres utiles : l'OLED de l'ESP32 fait 21 colonnes, dont 6 pour
+        "Ready ". Un caractere hors ASCII devient '?' plutot que de casser la trame.
+        """
+        raw = str(text).encode("ascii", "replace")[:15]
+        return self._pack(self._tx.bamboo_hmi_text_encode(raw))
+
     def recalibrate_gyro(self):
         """MAV_CMD_PREFLIGHT_CALIBRATION param1=1 : remesure du biais gyro AU REPOS.
 

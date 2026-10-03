@@ -71,5 +71,9 @@
       <field type="float[4]" name="rpm" units="rpm">Vitesse MESUREE M1..M4 (encodeur, apres filtrage carte).</field>
       <field type="float[4]" name="rpm_req" units="rpm">Vitesse DEMANDEE M1..M4 (sortie de la cinematique embarquee = consigne du PID).</field>
     </message>
+    <message id="42007" name="BAMBOO_HMI_TEXT">
+      <description>Texte court hote->carte pour l'ecran de la carte (ESP32 WaveShare : ligne "Ready" de l'OLED 21 colonnes). Porte le MODE du robot (CONDUITE, CALIB 3/12...), tenu cote ROS par bamboo_mode_manager. Renvoye a 1 Hz par le driver : la carte revient a "Ready" seul au-dela de quelques secondes sans message, pour ne jamais afficher un mode perime. Une carte sans ecran l'ignore.</description>
+      <field type="char[16]" name="text">Texte ASCII, 15 caracteres utiles (zero terminal si plus court).</field>
+    </message>
   </messages>
 </mavlink>

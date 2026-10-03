@@ -43,12 +43,15 @@
 //           ROS (/joint_states et /req_states). Les deux voies sans
 //           encodeur (M3/M4) ont un RPM mesure RECOPIE de M1/M2, mais
 //           une consigne bien distincte.
+//    0.4.0  BAMBOO_HMI_TEXT (42007) : texte de l'hote sur la ligne
+//           "Ready" de l'OLED (mode du robot : CONDUITE, CALIB 3/12...),
+//           retour a "Ready" seul apres 5 s sans message.
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 3
+#define FW_VERSION_MINOR 4
 #define FW_VERSION_PATCH 0
 
 #define FW_STR_(x) #x

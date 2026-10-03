@@ -4904,6 +4904,7 @@ MAVLINK_MSG_ID_BAMBOO_ENCODERS = 42003
 MAVLINK_MSG_ID_BAMBOO_CMD_VEL = 42004
 MAVLINK_MSG_ID_BAMBOO_MAG = 42005
 MAVLINK_MSG_ID_BAMBOO_MOTOR_RPM = 42006
+MAVLINK_MSG_ID_BAMBOO_HMI_TEXT = 42007
 MAVLINK_MSG_ID_SYS_STATUS = 1
 MAVLINK_MSG_ID_SYSTEM_TIME = 2
 MAVLINK_MSG_ID_PING = 4
@@ -5365,6 +5366,50 @@ class MAVLink_bamboo_motor_rpm_message(MAVLink_message):
 # Define name on the class for backwards compatibility (it is now msgname).
 # Done with setattr to hide the class variable from mypy.
 setattr(MAVLink_bamboo_motor_rpm_message, "name", mavlink_msg_deprecated_name_property())
+
+
+class MAVLink_bamboo_hmi_text_message(MAVLink_message):
+    """
+    Texte court hote->carte pour l'ecran de la carte (ESP32 WaveShare
+    : ligne "Ready" de l'OLED 21 colonnes). Porte le MODE du robot
+    (CONDUITE, CALIB 3/12...), tenu cote ROS par bamboo_mode_manager.
+    Renvoye a 1 Hz par le driver : la carte revient a "Ready" seul au-
+    dela de quelques secondes sans message, pour ne jamais afficher un
+    mode perime. Une carte sans ecran l'ignore.
+    """
+
+    id = MAVLINK_MSG_ID_BAMBOO_HMI_TEXT
+    msgname = "BAMBOO_HMI_TEXT"
+    fieldnames = ["text"]
+    ordered_fieldnames = ["text"]
+    fieldtypes = ["char"]
+    fielddisplays_by_name: Dict[str, str] = {}
+    fieldenums_by_name: Dict[str, str] = {}
+    fieldunits_by_name: Dict[str, str] = {}
+    native_format = bytearray(b"<c")
+    orders = [0]
+    lengths = [1]
+    array_lengths = [16]
+    crc_extra = 148
+    unpacker = struct.Struct("<16s")
+    instance_field = None
+    instance_offset = -1
+
+    def __init__(self, text: bytes):
+        MAVLink_message.__init__(self, MAVLink_bamboo_hmi_text_message.id, MAVLink_bamboo_hmi_text_message.msgname)
+        self._fieldnames = MAVLink_bamboo_hmi_text_message.fieldnames
+        self._instance_field = MAVLink_bamboo_hmi_text_message.instance_field
+        self._instance_offset = MAVLink_bamboo_hmi_text_message.instance_offset
+        self._text_raw = text
+        self.text = text.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+
+    def pack(self, mav: "MAVLink", force_mavlink1: bool = False) -> bytes:
+        return self._pack(mav, self.crc_extra, self.unpacker.pack(self._text_raw), force_mavlink1=force_mavlink1)
+
+
+# Define name on the class for backwards compatibility (it is now msgname).
+# Done with setattr to hide the class variable from mypy.
+setattr(MAVLink_bamboo_hmi_text_message, "name", mavlink_msg_deprecated_name_property())
 
 
 class MAVLink_sys_status_message(MAVLink_message):
@@ -15136,6 +15181,7 @@ mavlink_map: Dict[int, Type[MAVLink_message]] = {
     MAVLINK_MSG_ID_BAMBOO_CMD_VEL: MAVLink_bamboo_cmd_vel_message,
     MAVLINK_MSG_ID_BAMBOO_MAG: MAVLink_bamboo_mag_message,
     MAVLINK_MSG_ID_BAMBOO_MOTOR_RPM: MAVLink_bamboo_motor_rpm_message,
+    MAVLINK_MSG_ID_BAMBOO_HMI_TEXT: MAVLink_bamboo_hmi_text_message,
     MAVLINK_MSG_ID_SYS_STATUS: MAVLink_sys_status_message,
     MAVLINK_MSG_ID_SYSTEM_TIME: MAVLink_system_time_message,
     MAVLINK_MSG_ID_PING: MAVLink_ping_message,
@@ -15902,6 +15948,36 @@ class MAVLink(object):
 
         """
         self.send(self.bamboo_motor_rpm_encode(time_boot_ms, rpm, rpm_req), force_mavlink1=force_mavlink1)
+
+    def bamboo_hmi_text_encode(self, text: bytes) -> MAVLink_bamboo_hmi_text_message:
+        """
+        Texte court hote->carte pour l'ecran de la carte (ESP32 WaveShare :
+        ligne "Ready" de l'OLED 21 colonnes). Porte le MODE du robot
+        (CONDUITE, CALIB 3/12...), tenu cote ROS par
+        bamboo_mode_manager. Renvoye a 1 Hz par le driver : la carte
+        revient a "Ready" seul au-dela de quelques secondes sans
+        message, pour ne jamais afficher un mode perime. Une carte
+        sans ecran l'ignore.
+
+        text                      : Texte ASCII, 15 caracteres utiles (zero terminal si plus court). (type:char)
+
+        """
+        return MAVLink_bamboo_hmi_text_message(text)
+
+    def bamboo_hmi_text_send(self, text: bytes, force_mavlink1: bool = False) -> None:
+        """
+        Texte court hote->carte pour l'ecran de la carte (ESP32 WaveShare :
+        ligne "Ready" de l'OLED 21 colonnes). Porte le MODE du robot
+        (CONDUITE, CALIB 3/12...), tenu cote ROS par
+        bamboo_mode_manager. Renvoye a 1 Hz par le driver : la carte
+        revient a "Ready" seul au-dela de quelques secondes sans
+        message, pour ne jamais afficher un mode perime. Une carte
+        sans ecran l'ignore.
+
+        text                      : Texte ASCII, 15 caracteres utiles (zero terminal si plus court). (type:char)
+
+        """
+        self.send(self.bamboo_hmi_text_encode(text), force_mavlink1=force_mavlink1)
 
     def sys_status_encode(self, onboard_control_sensors_present: int, onboard_control_sensors_enabled: int, onboard_control_sensors_health: int, load: int, voltage_battery: int, current_battery: int, battery_remaining: int, drop_rate_comm: int, errors_comm: int, errors_count1: int, errors_count2: int, errors_count3: int, errors_count4: int) -> MAVLink_sys_status_message:
         """

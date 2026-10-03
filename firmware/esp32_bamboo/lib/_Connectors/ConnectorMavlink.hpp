@@ -46,6 +46,9 @@ class ConnectorMavlink : public Connector {
     void publishRange(Range::Range_t pRange);
     void publishJoint(joint_state_t* pJointStateList);
     void publishWifi(DeviceWifi::DeviceWifi_t* pWifiData);
+    // Texte de l'hote pour l'ecran (BAMBOO_HMI_TEXT), ou NULL s'il date de plus de
+    // `max_age_ms` (ou n'est jamais venu) : l'ecran revient alors a "Ready" seul.
+    const char* hmiText(uint32_t max_age_ms);
     void setTwist(double linear_x, double linear_y, double angular_z);
     float getTwistX();
     float getTwistY();
@@ -107,6 +110,8 @@ class ConnectorMavlink : public Connector {
     uint32_t lastTick_ = 0;   // cadence du tick de controle (~10 Hz)
     uint32_t lastHeartbeat_ = 0; // cadence HEARTBEAT (~1 Hz)
     volatile bool gyroCalReq_ = false; // demande de recalibrage gyro en attente
+    char     hmiText_[17] = {0};  // dernier BAMBOO_HMI_TEXT (16 octets + zero terminal)
+    uint32_t hmiMs_ = 0;          // millis() de sa reception, 0 = jamais
     bool versionSent_ = false; // banniere d'identite deja emise (une fois au demarrage)
     uint8_t logLevel_ = 6;     // MAV_SEVERITY_INFO : seuil de journal par defaut
 };

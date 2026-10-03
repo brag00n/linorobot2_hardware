@@ -479,6 +479,12 @@ void ConnectorMavlink::parseByte(uint8_t b) {
     }
 }
 
+const char* ConnectorMavlink::hmiText(uint32_t max_age_ms) {
+    if (hmiMs_ == 0 || hmiText_[0] == '\0') return NULL;
+    if ((uint32_t)(millis() - hmiMs_) > max_age_ms) return NULL;
+    return hmiText_;
+}
+
 void ConnectorMavlink::routeMessage() {
     mavlink_message_t *msg = &s_rx_ready;
     switch (msg->msgid) {
@@ -498,6 +504,17 @@ void ConnectorMavlink::routeMessage() {
     case MAVLINK_MSG_ID_BAMBOO_MOTOR_PWM:
         // Pas de chemin connecteur -> moteur PWM open-loop (differe, cf. plan).
         break;
+    case MAVLINK_MSG_ID_BAMBOO_HMI_TEXT: {
+        // Mode du robot pour l'OLED. Juste range : c'est la boucle batterie de firmware.cpp
+        // qui redessine l'ecran, a sa cadence, et qui juge de la fraicheur (hmiText()).
+        char buf[17] = {0};
+        mavlink_msg_bamboo_hmi_text_get_text(msg, buf);
+        buf[16] = '\0';
+        memcpy(hmiText_, buf, sizeof(hmiText_));
+        hmiMs_ = millis();
+        if (hmiMs_ == 0) hmiMs_ = 1;   // 0 est reserve a "jamais recu"
+        break;
+    }
     case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
         for (uint16_t i = 0; i < PARAM_COUNT; i++) sendParam(i);
         break;

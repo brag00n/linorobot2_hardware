@@ -511,8 +511,18 @@ void publishData()
         // String status= "Ready: ";
         // status += String("ROS(") + (connectorROS.isAvailable() ? "OK" : "KO") + ")";
         // status += String("WEB(") + (connectorWeb.isAvailable() ? "OK" : "KO") + ")";
+#if defined(ENABLE_MAVLINK)
+        // Ligne 1 = "Ready" + le MODE du robot envoye par l'hote (BAMBOO_HMI_TEXT, 1 Hz).
+        // 21 colonnes : "Ready " (6) + 15 caracteres de texte, exactement le budget de
+        // l'OLED (cf. setup). Au-dela de 5 s sans message : "Ready" seul, jamais un mode
+        // perime -- le driver ROS est peut-etre arrete.
+        const char* hmi = connectorROS.hmiText(5000);
+        const String ready = hmi ? String("Ready ") + String(hmi) : String("Ready");
+#else
+        const String ready = "Ready";
+#endif
         update_oled(NULL,
-            "Ready",
+            ready.c_str(),
             (String("batt: ") + String(prev_voltage) + "V, " + String(prev_current) + "A").c_str(),
             NULL
         );
