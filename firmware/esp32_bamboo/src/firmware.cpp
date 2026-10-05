@@ -371,10 +371,16 @@ void moveBase()
 
     // the required rpm is capped at -/+ MAX_RPM to prevent the PID from having too much error
     // the PWM value sent to the motor driver is the calculated PID based on required RPM vs measured RPM
+    // Sorties PID calculees UNE FOIS par cycle et GARDEES : le journal plus bas les relisait
+    // en rappelant compute(), ce qui integrait DEUX FOIS par cycle les PID de M1/M2 (correctif
+    // 2026-10-05, prealable au reglage automatique des gains).
+    float pwm1 = 0, pwm2 = 0;
 #ifdef ENABLE_DEVICE_MOTOR
 #ifdef ENABLE_DEVICE_PID
-    motor1_controller.spin(motor1_pid.compute(req_rpm.motor1, current_rpm1));
-    motor2_controller.spin(motor2_pid.compute(req_rpm.motor2, current_rpm2));
+    pwm1 = motor1_pid.compute(req_rpm.motor1, current_rpm1);
+    pwm2 = motor2_pid.compute(req_rpm.motor2, current_rpm2);
+    motor1_controller.spin(pwm1);
+    motor2_controller.spin(pwm2);
     motor3_controller.spin(motor3_pid.compute(req_rpm.motor3, current_rpm3));
     motor4_controller.spin(motor4_pid.compute(req_rpm.motor4, current_rpm4));
 #else
@@ -387,7 +393,7 @@ void moveBase()
 
 #ifdef ENABLE_DEVICE_PID
     if ((current_rpm1 != previous_rpm1) || (current_rpm2 != previous_rpm2) || (current_rpm3 != previous_rpm3) || (current_rpm4 != previous_rpm4)){
-        if (isSyslog) syslog(LOG_DEBUG, ("   RPM01("+String(req_rpm.motor1)+")=" + String(current_rpm1) + ",PWM01="+String(motor1_pid.compute(req_rpm.motor1, current_rpm1))+", RPM02("+String(req_rpm.motor2)+")="+ String(current_rpm2)+",PWM02="+String(motor2_pid.compute(req_rpm.motor2, current_rpm2))+", Twist:{lin.x:" + String(connectorROS.getTwistX()) + ",lin.y:" + String(connectorROS.getTwistY()) + ",ang.z:" + String(connectorROS.getTwistZ()) + "}\n").c_str());
+        if (isSyslog) syslog(LOG_DEBUG, ("   RPM01("+String(req_rpm.motor1)+")=" + String(current_rpm1) + ",PWM01="+String(pwm1)+", RPM02("+String(req_rpm.motor2)+")="+ String(current_rpm2)+",PWM02="+String(pwm2)+", Twist:{lin.x:" + String(connectorROS.getTwistX()) + ",lin.y:" + String(connectorROS.getTwistY()) + ",ang.z:" + String(connectorROS.getTwistZ()) + "}\n").c_str());
     }
 #endif // ENABLE_DEVICE_PID
 

@@ -48,13 +48,15 @@
 //           retour a "Ready" seul apres 5 s sans message.
 //    0.5.0  SCALED_IMU (#26) emis avec ATTITUDE : l'accelerometre (mG) et
 //           le gyro (mrad/s) parviennent enfin a l'hote (/imu/data).
+//    0.5.1  Correctif : le journal de debogage rappelait compute() sur les
+//           PID de M1/M2, integres DEUX FOIS par cycle.
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
 #define FW_VERSION_MINOR 5
-#define FW_VERSION_PATCH 0
+#define FW_VERSION_PATCH 1
 
 #define FW_STR_(x) #x
 #define FW_STR(x)  FW_STR_(x)
