@@ -200,13 +200,17 @@ void ConnectorMavlink::publishImu(IMUInterface::Imu_t m) {
 void ConnectorMavlink::publishBattery(Battery::Battery_t b) {
     long mv = lroundf(b.voltage * 1000.0f);
     battMv_ = (uint16_t)(mv < 0 ? 0 : (mv > 65535 ? 65535 : mv));
-    // SYS_STATUS emis a la cadence de publishBattery (BATTERY_TIMER) : tension seule.
+    // SYS_STATUS : tension ET courant (INA219). current_battery en cA (10 mA), POSITIF en
+    // decharge (convention MAVLink) -- Battery_t.current est negatif en decharge. Le courant
+    // sert a l'hote a estimer la RESISTANCE INTERNE du pack (sante de la batterie).
+    long ca = lroundf(-b.current * 100.0f);
+    const int16_t cur = (int16_t)(ca > 32767 ? 32767 : (ca < -32767 ? -32767 : ca));
     mavlink_msg_sys_status_pack(MAV_SYS_ID_ESP32, MAV_COMP_ID, &s_tx_msg,
                                 0, 0, 0,            // sensors present/enabled/health
                                 0,                  // load
                                 battMv_,            // voltage_battery (mV)
-                                -1,                 // current_battery (non mesure ici)
-                                -1,                 // battery_remaining (inconnu)
+                                cur,                // current_battery (cA)
+                                -1,                 // battery_remaining (estime par l'hote)
                                 0, 0, 0, 0, 0, 0);
     sendMessage();
 }

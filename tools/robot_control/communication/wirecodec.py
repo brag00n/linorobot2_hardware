@@ -17,7 +17,7 @@ remplacement) : cf. directive projet. Chaque codec expose une interface uniforme
 
 Evenements normalises (kind, payload) consommes par RobotComSerial._applyEvent :
   ("speed",   {vx,vy,vz,battery,ts})   vx/vy en mm/s, vz en rad/s, battery en V|None
-  ("battery", {battery})               V (MAVLink : SYS_STATUS separe de la vitesse)
+  ("battery", {battery[,current]})     V ; current en A, + en decharge (MAVLink, ESP32 >= 0.5.2)
   ("imu",     {roll,pitch,yaw,ts[,gyro]}) degres ; gyro = (gx,gy,gz) rad/s, MAVLink seul
   ("accel",   {accel,ts})              (ax,ay,az) m/s2, SCALED_IMU - ESP32 >= 0.5.0
   ("imu_raw", {accel,gyro,ts})         accel/gyro bruts GrovePi - yahboom uniquement (le codec MAVLink ne l'emet plus)
@@ -318,7 +318,10 @@ class MavlinkCodec:
             kind = "ir" if m.id == 4 else "ultra"
             return [(kind, {"id": m.id, "mm": mm, "ts": m.time_boot_ms})]
         if t == "SYS_STATUS":
-            return [("battery", {"battery": m.voltage_battery / 1000.0})]
+            # current_battery en cA, POSITIF en decharge ; -1 = non mesure (carte sans
+            # INA219, ou microcode ESP32 < 0.5.2). Converti en A, None si absent.
+            cur = None if m.current_battery == -1 else m.current_battery / 100.0
+            return [("battery", {"battery": m.voltage_battery / 1000.0, "current": cur})]
         if t == "BAMBOO_WHEEL_STATE":
             # vx/vy en m/s -> mm/s (convention snapshot) ; wz en rad/s. Batterie via
             # SYS_STATUS separe (None ici pour ne pas ecraser).

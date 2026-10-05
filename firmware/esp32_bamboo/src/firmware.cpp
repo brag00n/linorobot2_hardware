@@ -500,12 +500,21 @@ void publishData()
 #endif // ENABLE_DEVICE_MAG
 
 #ifdef ENABLE_DEVICE_BATTERY
+#if defined(ENABLE_MAVLINK)
+    // Tension + courant a 4 Hz vers l'hote : la chute sous charge d'une rotation de 2 s
+    // n'est mesurable qu'a cette cadence (la boucle lente ci-dessous, a BATTERY_TIMER = 2 s,
+    // garde l'OLED). Une lecture INA219 en 9 bits coute ~1 ms d'I2C.
+    EXECUTE_EVERY_N_MS(250, {
+        battery.readBattery();
+        connectorROS.publishBattery(battery.getData());
+    });
+#endif // ENABLE_MAVLINK
     EXECUTE_EVERY_N_MS(BATTERY_TIMER, {
 
         battery.readBattery();
-#ifdef ENABLE_CONNECTOR_CONTROL
+#if defined(ENABLE_CONNECTOR_CONTROL) && !defined(ENABLE_MAVLINK)
         connectorROS.publishBattery(battery.getData());
-#endif // ENABLE_CONNECTOR_CONTROL
+#endif // ENABLE_CONNECTOR_CONTROL && !ENABLE_MAVLINK
 #ifdef ENABLE_CONNECTOR_WEB
         connectorWeb.publishBattery(battery.getData());
 #endif // ENABLE_CONNECTOR_WEB

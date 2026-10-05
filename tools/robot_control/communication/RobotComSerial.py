@@ -68,6 +68,8 @@ class RobotComSerial:
 
         # Derniers etats decodes (thread-safe via self.lock)
         self.battery = None            # V
+        self.battery_current = None    # A, POSITIF en decharge (None : non mesure)
+        self.battery_t = 0.0           # time.time() de la derniere trame batterie
         self.vx = self.vy = self.vz = None
         self.yaw = None                # deg
         self.gyro = None               # (gx, gy, gz) rad/s, MAVLink ATTITUDE seulement
@@ -312,6 +314,8 @@ class RobotComSerial:
                                 vz=self.vz, batt=self.battery)
         elif kind == "battery":
             self.battery = p["battery"]
+            self.battery_current = p.get("current")
+            self.battery_t = time.time()
         elif kind == "imu":
             self.roll = p["roll"]
             self.pitch = p["pitch"]
@@ -405,6 +409,8 @@ class RobotComSerial:
         with self.lock:
             return {
                 "battery": self.battery, "yaw": self.yaw,
+                "battery_current": self.battery_current,
+                "battery_age": (now - self.battery_t) if self.battery_t else None,
                 "roll": self.roll, "pitch": self.pitch,
                 # Vitesses gyro en rad/s (None si le protocole ne les porte pas). Meme
                 # trame que l'attitude, donc meme fraicheur : imu_age.

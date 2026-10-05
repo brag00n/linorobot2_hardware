@@ -50,13 +50,15 @@
 //           le gyro (mrad/s) parviennent enfin a l'hote (/imu/data).
 //    0.5.1  Correctif : le journal de debogage rappelait compute() sur les
 //           PID de M1/M2, integres DEUX FOIS par cycle.
+//    0.5.2  SYS_STATUS porte le COURANT (INA219, cA) et part a 4 Hz : l'hote
+//           estime la resistance interne et l'etat de charge du pack.
 // =====================================================================
 
 #define FW_BOARD_NAME    "ESP32-WROOM-32UE_bamboo"
 
 #define FW_VERSION_MAJOR 0
 #define FW_VERSION_MINOR 5
-#define FW_VERSION_PATCH 1
+#define FW_VERSION_PATCH 2
 
 #define FW_STR_(x) #x
 #define FW_STR(x)  FW_STR_(x)
